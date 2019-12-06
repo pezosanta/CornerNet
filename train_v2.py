@@ -266,7 +266,7 @@ def train(batch_size = 4, epochs = 30):
 
                         best_average_val_loss = current_average_val_loss                        
 
-                        PATH = '/content/drive/My Drive/CornerNet/ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(current_epoch, current_train_iter)                        
+                        PATH = './ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(current_epoch, current_train_iter)                        
                         torch.save({
                                     'epoch': current_epoch,
                                     'iter': current_train_iter,
