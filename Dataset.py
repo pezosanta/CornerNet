@@ -48,10 +48,11 @@ categories_dict = { 'bus': 0,
 #train_image_root = "/content/train/"
 #val_image_root = "/content/val/"
 
-train_annotation_path = "/BDD100K/bdd100k_labels_images_train.json"
-val_annotation_path = "/BDD100K/bdd100k_labels_images_val.json"
-train_image_root = "/BDD100K/train/"
-val_image_root = "/BDD100K/val/"
+# Docker
+train_annotation_path = "./BDD100K/bdd100k_labels_images_train.json"
+val_annotation_path = "./BDD100K/bdd100k_labels_images_val.json"
+train_image_root = "./BDD100K/train/"
+val_image_root = "./BDD100K/val/"
 
 def get_annotations(mode):
     
