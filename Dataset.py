@@ -26,16 +26,16 @@ categories = [  'bus',
                 'train',
                 'rider' ]
 
-categories_dict = { 'bus': 0,
-                    'traffic light': 1,
-                    'traffic sign': 2,
-                    'person': 3,
-                    'bicycle': 4,
-                    'truck': 5,
-                    'motorcycle': 6,
-                    'car': 7,
-                    'train': 8,
-                    'rider': 9 }
+categories_dict = { 'bus': 1,
+                    'traffic light': 2,
+                    'traffic sign': 3,
+                    'person': 4,
+                    'bicycle': 5,
+                    'truck': 6,
+                    'motorcycle': 7,
+                    'car': 8,
+                    'train': 9,
+                    'rider': 10 }
 # Windows
 #train_annotation_path = "C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//labels//bdd100k_labels_images_train.json"
 #val_annotation_path = "C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//labels//bdd100k_labels_images_val.json"
@@ -96,14 +96,15 @@ def get_image(mode, name):
 
     return image
 
-def _resize_image(image, detection, size):
-    detection    = detection.copy()
+def _resize_image(image, size):
+    #detection    = detection.copy()
     #print(len(detection), detection)
     height, width = image.shape[0:2]
     new_height, new_width = size
 
     image = cv2.resize(image, (new_width, new_height))
     
+    '''
     height_ratio = new_height / height
     width_ratio  = new_width  / width
     for i in range(len(detection)):
@@ -112,7 +113,8 @@ def _resize_image(image, detection, size):
         detection[i][3] *= width_ratio
         detection[i][2] *= height_ratio
         detection[i][4] *= height_ratio
-    return image, detection
+    '''
+    return image#, detection
 
 def gaussian_radius(det_size, min_overlap):
     height, width = det_size
@@ -172,26 +174,33 @@ class Dataset(Dataset):
         self.gaussian_bump = True
         self.gaussian_iou = 0.7
         self.gaussian_rad = -1   
-        self.input_size = [384, 640]    # Original_input_size / 2 (+ height_padding)
+        #self.input_size = [384, 640]    # Original_input_size / 2 (+ height_padding)
+        self.input_size = [768, 1280]
         self.output_size = [96, 160]    # Original_output_size / 2 (+ height_padding)
         self.num_categories = 10
-        self.max_tag_len = 160    
+        self.max_tag_len = 160
 
     def __getitem__(self, index):
         name = self.image_names[index]
-
+        #print(name)
         detection = self.detections[name]
+        #print('Number of objects on the image: {}'.format(len(detection)))
+        #print('GT boxes in the image:\n{}'.format(detection))
+        
         image = get_image(mode = self.mode, name = name)
 
         images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = self.transform(image = image, detection = detection)
 
-        return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs
+        return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs#, name
 
     def transform(self, image, detection):
-        image, detection = _resize_image(image = image, detection = detection, size = (360, 640))
+        npad = ((0, 48), (0, 0), (0, 0))
+        image = np.pad(image, pad_width = npad, mode = 'constant', constant_values = 0)     # this does not effect the annotations   
 
-        npad = ((0, 24), (0, 0), (0, 0))
-        image = np.pad(image, pad_width = npad, mode = 'constant', constant_values = 0)     # this does not effect the annotations                
+        image = _resize_image(image = image, size = (384, 640))
+
+        # npad = ((0, 24), (0, 0), (0, 0))
+        # image = np.pad(image, pad_width = npad, mode = 'constant', constant_values = 0)     # this does not effect the annotations                
 
         tl_heatmaps = np.zeros((self.num_categories, self.output_size[0], self.output_size[1]), dtype = np.float32)
         br_heatmaps = np.zeros((self.num_categories, self.output_size[0], self.output_size[1]), dtype = np.float32)
@@ -202,33 +211,35 @@ class Dataset(Dataset):
         tag_masks   = np.zeros((self.max_tag_len), dtype = np.uint8)
         tag_lens    = np.zeros((1, ), dtype = np.int32)
 
-        width_ratio  = self.output_size[1] / self.input_size[1]
+        width_ratio  = self.output_size[1] / self.input_size[1] # 1/8
         height_ratio = self.output_size[0] / self.input_size[0]
 
         for ind, det in enumerate(detection):
             #print("haaaaaaaaaaaaa: " + str(det))
-            category = det[0]
+            category = int(det[0]) - 1
 
-            xtl, ytl = det[1], det[2]
+            xtl, ytl = det[1], det[2]   # Original sized coordinates
             xbr, ybr = det[3], det[4]
 
             #print(xtl, ytl, xbr, ybr)
 
-            fxtl = (xtl * width_ratio)
+            fxtl = (xtl * width_ratio)  # 1/8 sized coodinates (float numbers)
             fytl = (ytl * height_ratio)
             fxbr = (xbr * width_ratio)
             fybr = (ybr * height_ratio)
 
-            xtl = int(fxtl)
-            ytl = int(fytl)
-            xbr = int(fxbr)
+            xtl = int(fxtl)             # Floored 1/8 sized coordinates (int numbers)
+            ytl = int(fytl) 
+            xbr = int(fxbr) 
             ybr = int(fybr)
 
+            #print(xtl, (fxtl-xtl), ytl, (fytl-ytl), xbr, (fxbr-xbr), ybr, (fybr-ybr)) 
+
             if self.gaussian_bump:
-                width  = det[3] - det[1]
+                width  = det[3] - det[1]    # Original width
                 height = det[4] - det[2]
 
-                width  = math.ceil(width * width_ratio)
+                width  = math.ceil(width * width_ratio) # 1/8 width
                 height = math.ceil(height * height_ratio)
 
                 if self.gaussian_rad == -1:
@@ -243,12 +254,15 @@ class Dataset(Dataset):
                 tl_heatmaps[category, ytl, xtl] = 1
                 br_heatmaps[category, ybr, xbr] = 1
 
-            tag_ind = tag_lens
+            tag_ind = tag_lens[0]
+            #print('TAG_IND: {}'.format(tag_ind))
             tl_regrs[tag_ind, :] = [fxtl - xtl, fytl - ytl]
+            #print('TL_REGRS[tag_ing]: {}'.format(tl_regrs[tag_ind]))
             br_regrs[tag_ind, :] = [fxbr - xbr, fybr - ybr]
             tl_tags[tag_ind] = ytl * self.output_size[1] + xtl
+            #print('TL_TAGS[tag_ing]: {}'.format(tl_tags[tag_ind]))
             br_tags[tag_ind] = ybr * self.output_size[1] + xbr
-            tag_lens += 1
+            tag_lens[0] += 1
         
         tag_len = tag_lens[0]
         #print("tag_len:{} ".format(tag_len))
@@ -264,6 +278,9 @@ class Dataset(Dataset):
         br_tags     = torch.from_numpy(br_tags).to(device = self.device)
         tag_masks   = torch.from_numpy(tag_masks).to(device = self.device)
 
+        #print('GT_TL_HEAT_IN_DATASET:\n{}'.format(tl_heatmaps.sum()))
+        #print('GT_BR_HEAT_IN_DATASET:\n{}'.format(br_heatmaps.sum()))
+
         return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs
 
     def __len__(self): 
@@ -273,7 +290,6 @@ class Dataset(Dataset):
 
 if __name__ == "__main__":
 
-    print('haha \nhaha')
     n = 5
     dims    = [256, 256, 384, 384, 384, 512]
     modules = [2, 2, 2, 2, 2, 4]
@@ -281,14 +297,15 @@ if __name__ == "__main__":
 
     model = kp(n = n, nstack = 2, dims = dims, modules = modules, out_dim = out_dim).eval().cpu()
 
+    '''
     model_dict = model.state_dict()
     print('Model_dict_len: ' + str(len(model_dict)))
     #print(model_dict)
 
     print('MODEL DICT DONE !!')
-
+    
     #CHECKPOINT_PATH = 'C://Users//Tony Stark//Desktop//Önálló laboratórium//Code//CornerNet//pretrained_cornernet.pkl'
-    CHECKPOINT_PATH = '/content/CornerNet_500000.pkl'
+    CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/CornerNet_500000.pkl'
     pretrained_dict = torch.load(CHECKPOINT_PATH)
     print('PRETRAINED DICT DONE !!')
 
@@ -297,6 +314,7 @@ if __name__ == "__main__":
     adapted_dict = {k[n_clip:]: v for k, v in pretrained_dict.items()
                 if (k.startswith(prefix + 'pre') or k.startswith(prefix + 'kps') or k.startswith(prefix + 'inter') or k.startswith(prefix + 'cnv'))}
     print('ADAPTED_dict_len: ' + str(len(adapted_dict)))
+    '''
 
     '''
     for k, v in adapted_dict.items():
@@ -308,22 +326,23 @@ if __name__ == "__main__":
     #    if(torch.equal(k[1], v[1])):
     #        print('EQUAL!')
 
-    
+    '''
     for k, v in zip(model_dict.items(), adapted_dict.items()):
-        #if k in model_dict:
-         #   pretrained_dict = {k: v}
-          #  print(k)
-        #print(k[0], v[0])
-        j = v[0].split('.', 1)[1]
-        #v[0] = j
+        if k in model_dict:
+            pretrained_dict = {k: v}
+            print(k)
         print(k[0], v[0])
-    
-
+        j = v[0].split('.', 1)[1]
+        v[0] = j
+        print(k[0], v[0])
+    '''
+    '''
     #pretrained_dict = {k: v for k, v in adapted_dict.items() if k in model_dict}
     #model_dict.update(adapted_dict)
     model.load_state_dict(adapted_dict, strict = False)
 
     model.cuda()
+
     model_dict_2 = model.state_dict()
     print('Model_dict_2_len: ' + str(len(model_dict_2)))
 
@@ -335,18 +354,25 @@ if __name__ == "__main__":
         if(torch.equal(adapted_dict[name], param)):
             print(name)
             count += 1
-    print('COUNT: ' + str(count))
-        
+    print('LOADED PARAMS COUNT: ' + str(count))
+    '''
+
     '''
     for k, v in zip(model_dict_2.items(), adapted_dict.items()):
         if(torch.equal(k[1], v[1])):
             print('EQUAL!')
     '''
 
-    '''
+    CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/ModelParams/pretrained_cornernet.pth'
+    pretrained_dict = torch.load(CHECKPOINT_PATH)
+    print('PRETRAINED DICT DONE !!')
+
+    model.load_state_dict(pretrained_dict['model_state_dict'])#, strict = False)
+    model.cuda()
+
     index = 32234
 
-    dataset = Dataset(mode = 'Train')
+    dataset = Dataset(mode = 'Val')
 
     dataloader = DataLoader(dataset = dataset, batch_size = 2 ,shuffle = True)
 
@@ -392,10 +418,22 @@ if __name__ == "__main__":
     print('-----------------LOSS DONE--------------------')
     print('loss_shape:{}, loss:{} '.format(loss.shape, loss))
     '''
+    PATH = '/content/drive/My Drive/CornerNet/ModelParams/pretrained_cornernet.pth'                        
+    torch.save({
+                #'epoch': current_epoch,
+                #'iter': current_train_iter,
+                'model_state_dict': model.state_dict()#,
+                #'optimizer_state_dict': optimizer.state_dict(),
+                #'train_loss': train_loss,
+                #'val_loss': current_average_val_loss
+                }, PATH)
+
+    print('!! SAVE DONE !!')
+    
     
     #tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr
     #images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = dataset.__getitem__(index)
-
+    '''
 
 
 
@@ -444,4 +482,56 @@ if __name__ == "__main__":
       tensor_term=torch.tensor(term, device = self.device)
 
       return tensor_obs, tensor_rew, tensor_act, tensor_term, tensor_next_obs
+'''
+
+'''
+# Tanító adathalmaz letöltése
+export trainimagesid=1MymWKQUFCENauQP8A6QRk1EglinAKaud
+export trainimagesfilename=train.zip
+wget --save-cookies trainimagescookies.txt 'https://docs.google.com/uc?export=download&id='$trainimagesid -O- \
+     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > trainimagesconfirm.txt
+wget --load-cookies trainimagescookies.txt -O $trainimagesfilename \
+     'https://docs.google.com/uc?export=download&id='$trainimagesid'&confirm='$(<trainimagesconfirm.txt)
+
+
+# Validációs adathalmaz letöltése
+export valimagesid=1zgutvylvwv4CFz7rzlPFsL5mrTFHuqFG
+export valimagesfilename=val.zip
+wget --save-cookies valimagescookies.txt 'https://docs.google.com/uc?export=download&id='$valimagesid -O- \
+     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > valimagesconfirm.txt
+wget --load-cookies valimagescookies.txt -O $valimagesfilename \
+     'https://docs.google.com/uc?export=download&id='$valimagesid'&confirm='$(<valimagesconfirm.txt)
+
+
+# Tanító annotáció letöltése
+export trainannotationid=1JLkStcXlhVzvB7Fns-c2Wy_94j8NH75R
+export trainannotationfilename=bdd100k_labels_images_train.json
+wget --save-cookies trainannotationcookies.txt 'https://docs.google.com/uc?export=download&id='$trainannotationid -O- \
+     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > trainannotationconfirm.txt
+wget --load-cookies trainannotationcookies.txt -O $trainannotationfilename \
+     'https://docs.google.com/uc?export=download&id='$trainannotationid'&confirm='$(<trainannotationconfirm.txt)
+
+
+# Validációs annotáció letöltése
+export valannotationid=1fj9Sg4v4TwSvD2nxs90uzNqZgVythxLS
+export valannotationfilename=bdd100k_labels_images_val.json
+wget --save-cookies valannotationcookies.txt 'https://docs.google.com/uc?export=download&id='$valannotationid -O- \
+     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > valannotationconfirm.txt
+wget --load-cookies valannotationcookies.txt -O $valannotationfilename \
+     'https://docs.google.com/uc?export=download&id='$valannotationid'&confirm='$(<valannotationconfirm.txt)
+
+
+# Best ModelParams letöltése
+export modelparamsid=13tYTwt-1PL8e-tCBN8QBC2vCNmEgbkmu
+export modelparamsfilename=train_valid_pretrained_cornernet-epoch3-iter5067.pth
+wget --save-cookies modelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$modelparamsid -O- \
+     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > modelparamsconfirm.txt
+wget --load-cookies modelparamscookies.txt -O $modelparamsfilename \
+     'https://docs.google.com/uc?export=download&id='$modelparamsid'&confirm='$(<modelparamsconfirm.txt)
+'''
+
+'''
+GT tenzorokat vizualizálni és megnézni, hogy jó e a vizualizáció 
+freezelni az eredeti súlyokat és ugy tanulni ==> nézni epochrol epochra a vizualizaciot
+8-adolás és kivonni belőle az egész részét
 '''
