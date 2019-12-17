@@ -176,7 +176,7 @@ class Dataset(Dataset):
         self.gaussian_rad = -1   
         #self.input_size = [384, 640]    # Original_input_size / 2 (+ height_padding)
         self.input_size = [768, 1280]
-        self.output_size = [96, 160]    # Original_output_size / 2 (+ height_padding)
+        self.output_size = [96, 160]    # Original_input_size / 8 (+ height_padding)
         self.num_categories = 10
         self.max_tag_len = 160
 
@@ -197,10 +197,7 @@ class Dataset(Dataset):
         npad = ((0, 48), (0, 0), (0, 0))
         image = np.pad(image, pad_width = npad, mode = 'constant', constant_values = 0)     # this does not effect the annotations   
 
-        image = _resize_image(image = image, size = (384, 640))
-
-        # npad = ((0, 24), (0, 0), (0, 0))
-        # image = np.pad(image, pad_width = npad, mode = 'constant', constant_values = 0)     # this does not effect the annotations                
+        image = _resize_image(image = image, size = (384, 640))             
 
         tl_heatmaps = np.zeros((self.num_categories, self.output_size[0], self.output_size[1]), dtype = np.float32)
         br_heatmaps = np.zeros((self.num_categories, self.output_size[0], self.output_size[1]), dtype = np.float32)
