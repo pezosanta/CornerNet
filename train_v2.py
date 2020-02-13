@@ -12,7 +12,7 @@ from losses import AELoss
 
 warnings.filterwarnings(action = 'once')
 
-#test
+# test from vs code
 
 def train(batch_size = 4, epochs = 30):
     since = time.time()
