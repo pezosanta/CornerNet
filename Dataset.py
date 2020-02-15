@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 import math
-from CornerNet_orig import kp
+from CornerNet import kp
 import cv2
 from losses import AELoss
 
