@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 import time
 import glob
@@ -254,7 +255,7 @@ def train(batch_size = 14, epochs = 40):
 
                       best_average_val_loss = average_val_loss                        
 
-                      PATH = './ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(current_epoch)                        
+                      PATH = '../ModelParams/Hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(current_epoch)                        
                       torch.save({
                                 'epoch': current_epoch,
                                 'iter': current_train_iter,
