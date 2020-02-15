@@ -47,13 +47,16 @@ unzip val.zip
 
 cd ..
 cd ModelParams
+mkdir Hourglass
+cd Hourglass
 
 # Best ModelParams letöltése
-export modelparamsid=13tYTwt-1PL8e-tCBN8QBC2vCNmEgbkmu
-export modelparamsfilename=train_valid_pretrained_cornernet-epoch3-iter5067.pth
-wget --save-cookies modelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$modelparamsid -O- \
+export Hourglass_modelparamsid=13tYTwt-1PL8e-tCBN8QBC2vCNmEgbkmu
+export Hourglass_modelparamsfilename=train_valid_pretrained_cornernet-epoch3-iter5067.pth
+wget --save-cookies modelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$Hourglass_modelparamsid -O- \
      | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > modelparamsconfirm.txt
-wget --load-cookies modelparamscookies.txt -O $modelparamsfilename \
-     'https://docs.google.com/uc?export=download&id='$modelparamsid'&confirm='$(<modelparamsconfirm.txt)
+wget --load-cookies modelparamscookies.txt -O $Hourglass_modelparamsfilename \
+     'https://docs.google.com/uc?export=download&id='$Hourglass_modelparamsid'&confirm='$(<modelparamsconfirm.txt)
 
+cd ..
 cd ..
