@@ -10,7 +10,7 @@ from Hourglass_module import kp_module
 from Corner_pooling import CornerPool_module
 from utils import convolution, residual, make_layer, make_kp_layer, make_layer_revr, make_merge_layer, make_pool_layer, make_unpool_layer,\
                     make_cnv_layer, make_inter_layer, _tranpose_and_gather_feat, _nms, _topk, _decode
-from external.nms import soft_nms, soft_nms_merge
+from NonMaxSuppression.nms import soft_nms, soft_nms_merge
 
 
 n = 5
