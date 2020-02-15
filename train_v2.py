@@ -30,8 +30,8 @@ def train(batch_size = 14, epochs = 40):
     
     ####################### LOAD CHECKPOINTS #######################
     #CHECKPOINT_PATH = '/home/pezosanta/Deep Learning/Supervised Learning/CornerNet/ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
-    #CHECKPOINT_PATH = './ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
-    CHECKPOINT_PATH = './ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(38)
+    CHECKPOINT_PATH = './ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
+    #CHECKPOINT_PATH = './ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(38)
     checkpoint = torch.load(CHECKPOINT_PATH)
     starting_epoch = checkpoint['epoch']
     starting_iter = checkpoint['iter'] + 1
