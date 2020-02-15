@@ -190,7 +190,8 @@ def test(batch_size = 1):
     test_loader_iter = iter(test_loader)
     
    
-    CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(9)
+    #CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(9)
+    CHECKPOINT_PATH = '../ModelParams/Hourglass/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
     checkpoint = torch.load(CHECKPOINT_PATH)
     best_average_val_loss = checkpoint['val_loss']
     
