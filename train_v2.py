@@ -6,8 +6,7 @@ import time
 import glob
 import warnings
 from Dataset import Dataset
-from CornerNet import CornerNet
-from CornerNet_orig import kp
+from CornerNet import kp
 from losses import AELoss
 
 warnings.filterwarnings(action = 'once')
