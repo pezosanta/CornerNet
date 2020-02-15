@@ -6,6 +6,7 @@ import json
 import os
 from os.path import exists, splitext, isdir, isfile, join, split, dirname
 import sys
+#sys.path.append('../)
 #from pprint import pprint
 import numpy as np
 import torch
@@ -49,10 +50,10 @@ categories_dict = { 'bus': 1,
 #val_image_root = "/content/val/"
 
 # Docker
-train_annotation_path = "./BDD100K/bdd100k_labels_images_train.json"
-val_annotation_path = "./BDD100K/bdd100k_labels_images_val.json"
-train_image_root = "./BDD100K/train/"
-val_image_root = "./BDD100K/val/"
+train_annotation_path = "../BDD100K/bdd100k_labels_images_train.json"
+val_annotation_path = "../BDD100K/bdd100k_labels_images_val.json"
+train_image_root = "../BDD100K/train/"
+val_image_root = "../BDD100K/val/"
 
 def get_annotations(mode):
     
