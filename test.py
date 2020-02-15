@@ -5,9 +5,9 @@ from skimage import io
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-#from Dataset import Dataset as Dataset_haha
-from Hourglass_module_orig import kp_module
-from Corner_pooling_v2 import CornerPool_module
+#from Dataset import Dataset as Dataset_test
+from Hourglass_module import kp_module
+from Corner_pooling import CornerPool_module
 from utils import convolution, residual, make_layer, make_kp_layer, make_layer_revr, make_merge_layer, make_pool_layer, make_unpool_layer,\
                     make_cnv_layer, make_inter_layer, _tranpose_and_gather_feat, _nms, _topk, _decode
 from external.nms import soft_nms, soft_nms_merge
