@@ -7,7 +7,7 @@ import time
 import glob
 import warnings
 from Dataset import Dataset
-from CornerNet import kp
+from CornerNet import kp as cornernet
 from losses import AELoss
 
 warnings.filterwarnings(action = 'once')
@@ -28,6 +28,7 @@ def train(batch_size = 14, epochs = 40):
     starting_iter = 0
     best_average_val_loss = 10000.0
     
+    writer = SummaryWriter('logs/hourglass/')
     
     ####################### LOAD CHECKPOINTS #######################
     #CHECKPOINT_PATH = '/home/pezosanta/Deep Learning/Supervised Learning/CornerNet/ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
@@ -62,8 +63,7 @@ def train(batch_size = 14, epochs = 40):
     print('BEST AVERAGE VAL LOSS: ' + str(best_average_val_loss))
     print('-' * 30)
    
-    model = kp(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
-    #model = CornerNet(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
+    model = cornernet(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
 
     '''
     # Load the original pretrained weights in the first epoch
@@ -107,6 +107,8 @@ def train(batch_size = 14, epochs = 40):
         print('-' * 30)
         
         epoch_since = time.time()
+
+        #writer = SummaryWriter('logs/hourglass/')
 
         current_train_iter = 0
         current_val_iter = 0
@@ -155,6 +157,10 @@ def train(batch_size = 14, epochs = 40):
                     running_train_loss += loss.item()
                     average_train_loss = running_train_loss / current_train_iter
 
+                    #writer.add_scalar(tag = 'avg_train_loss', scalar_value = average_train_loss, global_step = current_train_iter)
+                    writer.add_scalar(tag = 'TrainLoss/EPOCH {}'.format(current_epoch), scalar_value = loss.item(), global_step = current_train_iter)
+                    #writer.close()
+
                     if((current_train_iter % 100) == 0):
                         #print('-' * 30)
                         print('EPOCH ({}), TRAIN ITER {}/{}'.format(current_epoch, current_train_iter, max_iter))
@@ -188,9 +194,11 @@ def train(batch_size = 14, epochs = 40):
                     #print('-' * 30)
             
                     #!nvidia-smi
-            
+                writer.add_scalar(tag = 'TrainAvgLoss', scalar_value = average_train_loss, global_step = current_epoch)
+
             # VALIDATION IN EVERY 6000 TRAIN ITERATION 
-            elif phase == 'val':             
+            elif phase == 'val':   
+                          
                 #print('-' * 30)
                 print('! VALIDATION STEP !')
                 print('-' * 30)
@@ -226,6 +234,8 @@ def train(batch_size = 14, epochs = 40):
                         running_val_loss += val_loss.item()
                         average_val_loss = running_val_loss / current_val_iter
 
+                        writer.add_scalar(tag = 'ValLoss/EPOCH {}'.format(current_epoch), scalar_value = loss.item(), global_step = current_train_iter)
+
                         if((current_val_iter % 100) == 0):
                             #print('-' * 30)
                             print('EPOCH ({}), VALIDATION ITER {}/{}'.format(current_epoch, current_val_iter, len(val_loader)))
@@ -253,6 +263,8 @@ def train(batch_size = 14, epochs = 40):
                         
                       print('!!! SAVE !!! \nPREVIOUS BEST AVERAGE VAL LOSS: {} \nNEW BEST AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss))
 
+                      writer.add_text(tag = 'ModelParams', text_string = '!!! SAVE !!!  \nPREVIOUS BEST AVERAGE VAL LOSS: {}  \nNEW BEST AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = current_epoch, walltime = None)
+
                       best_average_val_loss = average_val_loss                        
 
                       PATH = '../ModelParams/Hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(current_epoch)                        
@@ -266,7 +278,10 @@ def train(batch_size = 14, epochs = 40):
                                 }, PATH)
                     else:
                       print('!!! NO SAVE !!! \nBEST AVERAGE VAL LOSS: {} \nCURRENT AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss))
-        
+                      writer.add_text(tag = 'ModelParams', text_string = '!!! NO SAVE !!!  \nBEST AVERAGE VAL LOSS: {}  \nCURRENT AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = current_epoch, walltime = None)
+
+                    writer.add_scalar(tag = 'ValAvgLoss', scalar_value = average_val_loss, global_step = current_epoch)
+
         epoch_time_elapsed = time.time() - epoch_since
 
         print('-' * 30)
