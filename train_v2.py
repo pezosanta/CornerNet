@@ -33,10 +33,9 @@ def train(batch_size = 14, epochs = 40):
     ####################### LOAD CHECKPOINTS #######################
     #CHECKPOINT_PATH = '/home/pezosanta/Deep Learning/Supervised Learning/CornerNet/ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
     CHECKPOINT_PATH = '../ModelParams/Hourglass/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
-    #CHECKPOINT_PATH = './ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(38)
     checkpoint = torch.load(CHECKPOINT_PATH)
-    starting_epoch = checkpoint['epoch']
-    starting_iter = checkpoint['iter'] + 1
+    starting_epoch = 0 #checkpoint['epoch']
+    starting_iter = 0 #checkpoint['iter'] + 1
     best_average_val_loss = checkpoint['val_loss']
     ################################################################
     
@@ -51,17 +50,6 @@ def train(batch_size = 14, epochs = 40):
     
     train_loader_iter = iter(train_loader)
     val_loader_iter = iter(val_loader)
-
-    max_iter = len(train_loader) #17465
-    #num_iter_until_val = 20#10000   
-    
-    print('-' * 30)
-    print('BATCH SIZE: ' + str(batch_size))
-    print('NUMBER OF TRAINING DATA BATCHES: ' + str(len(train_loader)))
-    print('NUMBER OF VALIDATION DATA BATCHES: ' + str(len(val_loader)))
-    print('NUMBER OF EPOCHS: ' + str(epochs))
-    print('BEST AVERAGE VAL LOSS: ' + str(best_average_val_loss))
-    print('-' * 30)
    
     model = cornernet(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
 
@@ -89,7 +77,14 @@ def train(batch_size = 14, epochs = 40):
 
     model.load_state_dict(checkpoint['model_state_dict'])
 
-    print(CHECKPOINT_PATH + ' IS LOADED TO MODEL !')
+    writer.add_text(tag = 'StartingLogs',                                                         \
+        text_string = (   'BATCH SIZE: {}  \n'.format(batch_size)                                 \
+                        + 'NUMBER OF EPOCHS: {}  \n'.format(epochs)                               \
+                        + 'TRAINING ITERATIONS / EPOCH: {}  \n'.format(len(train_loader))         \
+                        + 'VALIDATION ITERATIONS / EPOCH: {}  \n'.format(len(val_loader))         \
+                        + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)    \
+                        + 'LOADED MODEL PARAMETERS: {}'.format(CHECKPOINT_PATH)),                 \
+        global_step = None, walltime = None)
 
     criterion = AELoss(pull_weight = 1e-1, push_weight = 1e-1)
 
@@ -102,13 +97,10 @@ def train(batch_size = 14, epochs = 40):
     #        state[k] = v.cuda()
 
     for current_epoch in range(starting_epoch, epochs):
-        #print('-' * 30)
-        print('EPOCH {}/{}'.format(current_epoch, epochs))
-        print('-' * 30)
+
+        writer.add_text(tag = 'RunningLogs', text_string = 'EPOCH: {}/{}'.format((current_epoch + 1), epochs), global_step = (current_epoch + 1), walltime = None)
         
         epoch_since = time.time()
-
-        #writer = SummaryWriter('logs/hourglass/')
 
         current_train_iter = 0
         current_val_iter = 0
@@ -120,10 +112,7 @@ def train(batch_size = 14, epochs = 40):
 
         for phase in ['train', 'val']:
             if phase == 'train':
-                #print('-' * 30)
-                print('! TRAINING STEP !')
-                print('-' * 30)        
-                
+               
                 model.train()
 
                 #for i in range(20):
@@ -137,55 +126,23 @@ def train(batch_size = 14, epochs = 40):
                     xs = [images, tl_tags, br_tags]
                     ys = [tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs]                  
             
-                    outs = model(*xs)
-            
-                    #print('-' * 30)
-                    #print('CUDA MEMORY ALLOCATED: ' + str(torch.cuda.memory_allocated(torch.device('cuda:0'))/(1024**3)))
-                    #print('-' * 30)            
+                    outs = model(*xs)          
             
                     #scheduler = poly_lr_scheduler(optimizer = optimizer, init_lr = base_lr_rate, iter = current_iter, lr_decay_iter = 1, 
-                    #                          max_iter = max_iter, power = power)
+                    #                          max_iter = max_iter, power = power)                                                          # max_iter = len(train_loader)
             
                     optimizer.zero_grad()
-            
-                    #print('-' * 30)
-                    #print('ZERO GRAD DONE')
-                    #print('-' * 30)
             
                     loss = criterion(outs, ys)
 
                     running_train_loss += loss.item()
                     average_train_loss = running_train_loss / current_train_iter
 
-                    #writer.add_scalar(tag = 'avg_train_loss', scalar_value = average_train_loss, global_step = current_train_iter)
-                    writer.add_scalar(tag = 'TrainLoss/EPOCH {}'.format(current_epoch), scalar_value = loss.item(), global_step = current_train_iter)
-                    #writer.close()
-
-                    if((current_train_iter % 100) == 0):
-                        #print('-' * 30)
-                        print('EPOCH ({}), TRAIN ITER {}/{}'.format(current_epoch, current_train_iter, max_iter))
-                        print('AVERAGE TRAIN LOSS: {}'.format(average_train_loss))
-                        print('-' * 30)
-           
-                    #print('-' * 30)
-                    #print('TRAIN LOSS IS CALCULATED: {}'.format(loss.item()))
-                    #print('-' * 30)
-                           
+                    writer.add_scalar(tag = 'TrainRunLoss/EPOCH {}'.format(current_epoch + 1), scalar_value = loss.item(), global_step = current_train_iter)
+                    
                     loss.backward(retain_graph = False)
             
-                    #print('-' * 30)
-                    #print('BACKPROPAGATION DONE')
-                    #print('-' * 30)
-            
                     optimizer.step()
-            
-                    #print('-' * 30)
-                    #print('OPTIMIZATION STEP DONE')
-                    #print('-' * 30)
-            
-                    #print('-' * 30)
-                    #print('CUDA MEMORY ALLOCATED: ' + str(torch.cuda.memory_allocated(torch.device('cuda:0'))/(1024**3)))
-                    #print('-' * 30)
             
                     train_time_elapsed = time.time() - train_batch_since
            
@@ -193,15 +150,10 @@ def train(batch_size = 14, epochs = 40):
                     #print('TRAINING BATCH TIME IN SEC: ' + str(train_time_elapsed))
                     #print('-' * 30)
             
-                    #!nvidia-smi
-                writer.add_scalar(tag = 'TrainAvgLoss', scalar_value = average_train_loss, global_step = current_epoch)
+                writer.add_scalar(tag = 'TrainAvgLoss', scalar_value = average_train_loss, global_step = (current_epoch + 1))
 
             # VALIDATION IN EVERY 6000 TRAIN ITERATION 
             elif phase == 'val':   
-                          
-                #print('-' * 30)
-                print('! VALIDATION STEP !')
-                print('-' * 30)
                 
                 model.eval()
                 
@@ -234,36 +186,16 @@ def train(batch_size = 14, epochs = 40):
                         running_val_loss += val_loss.item()
                         average_val_loss = running_val_loss / current_val_iter
 
-                        writer.add_scalar(tag = 'ValLoss/EPOCH {}'.format(current_epoch), scalar_value = loss.item(), global_step = current_train_iter)
-
-                        if((current_val_iter % 100) == 0):
-                            #print('-' * 30)
-                            print('EPOCH ({}), VALIDATION ITER {}/{}'.format(current_epoch, current_val_iter, len(val_loader)))
-                            print('AVERAGE VAL LOSS: {}'.format(average_val_loss))
-                            print('-' * 30)
-                        
-                        #print('-' * 30)
-                        #print('VAL LOSS IS CALCULATED ! LOSS = {}'.format(loss.item()))
-                        #print('-' * 30)
-                        
-                        #print('-' * 30)
-                        #print('CUDA MEMORY ALLOCATED: ' + str(torch.cuda.memory_allocated(torch.device('cuda:0'))/(1024**3)))
-                        #print('-' * 30)
+                        writer.add_scalar(tag = 'ValRunLoss/EPOCH {}'.format((current_epoch + 1)), scalar_value = val_loss.item(), global_step = current_val_iter)
                         
                         val_time_elapsed = time.time() - val_batch_since
                         
                         #print('-' * 30)
                         #print('VALIDATION BATCH TIME IN SEC: ' + str(val_time_elapsed))
-                        #print('-' * 30)
-                        
-                        #!nvidia-smi
-                                        
+                        #print('-' * 30)                                        
                     
                     if(average_val_loss < best_average_val_loss):
-                        
-                      print('!!! SAVE !!! \nPREVIOUS BEST AVERAGE VAL LOSS: {} \nNEW BEST AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss))
-
-                      writer.add_text(tag = 'ModelParams', text_string = '!!! SAVE !!!  \nPREVIOUS BEST AVERAGE VAL LOSS: {}  \nNEW BEST AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = current_epoch, walltime = None)
+                      writer.add_text(tag = 'ModelParams', text_string = '!!! SAVE !!!  \nPREVIOUS BEST AVERAGE VAL LOSS: {}  \nNEW BEST AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = (current_epoch + 1), walltime = None)
 
                       best_average_val_loss = average_val_loss                        
 
@@ -277,10 +209,9 @@ def train(batch_size = 14, epochs = 40):
                                 'val_loss': average_val_loss
                                 }, PATH)
                     else:
-                      print('!!! NO SAVE !!! \nBEST AVERAGE VAL LOSS: {} \nCURRENT AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss))
-                      writer.add_text(tag = 'ModelParams', text_string = '!!! NO SAVE !!!  \nBEST AVERAGE VAL LOSS: {}  \nCURRENT AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = current_epoch, walltime = None)
+                      writer.add_text(tag = 'ModelParams', text_string = '!!! NO SAVE !!!  \nBEST AVERAGE VAL LOSS: {}  \nCURRENT AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = (current_epoch + 1), walltime = None)
 
-                    writer.add_scalar(tag = 'ValAvgLoss', scalar_value = average_val_loss, global_step = current_epoch)
+                    writer.add_scalar(tag = 'ValAvgLoss', scalar_value = average_val_loss, global_step = (current_epoch + 1))
 
         epoch_time_elapsed = time.time() - epoch_since
 
