@@ -58,5 +58,15 @@ wget --save-cookies modelparamscookies.txt 'https://docs.google.com/uc?export=do
 wget --load-cookies modelparamscookies.txt -O $Hourglass_modelparamsfilename \
      'https://docs.google.com/uc?export=download&id='$Hourglass_modelparamsid'&confirm='$(<modelparamsconfirm.txt)
 
+export Hourglass_origmodelparamsid=1HBFgPExTTlNTsAjyPoj9tMU7oqKaiuBz
+export Hourglass_origmodelparamsfilename=CornerNet_500000.pkl
+wget --save-cookies origmodelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$Hourglass_origmodelparamsid -O- \
+     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > origmodelparamsconfirm.txt
+wget --load-cookies origmodelparamscookies.txt -O $Hourglass_origmodelparamsfilename \
+     'https://docs.google.com/uc?export=download&id='$Hourglass_origmodelparamsid'&confirm='$(<origmodelparamsconfirm.txt)
+
 cd ..
 cd ..
+
+
+
