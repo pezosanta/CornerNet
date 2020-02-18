@@ -31,7 +31,6 @@ def train(batch_size = 14, epochs = 40):
     writer = SummaryWriter('logs/hourglass/')
     
     ####################### LOAD CHECKPOINTS #######################
-    #CHECKPOINT_PATH = '/home/pezosanta/Deep Learning/Supervised Learning/CornerNet/ModelParams/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
     CHECKPOINT_PATH = '../ModelParams/Hourglass/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
     checkpoint = torch.load(CHECKPOINT_PATH)
     starting_epoch = 0 #checkpoint['epoch']
@@ -77,14 +76,14 @@ def train(batch_size = 14, epochs = 40):
 
     model.load_state_dict(checkpoint['model_state_dict'])
 
-    writer.add_text(tag = 'StartingLogs',                                                         \
-        text_string = (   'BATCH SIZE: {}  \n'.format(batch_size)                                 \
-                        + 'NUMBER OF EPOCHS: {}  \n'.format(epochs)                               \
-                        + 'TRAINING ITERATIONS / EPOCH: {}  \n'.format(len(train_loader))         \
-                        + 'VALIDATION ITERATIONS / EPOCH: {}  \n'.format(len(val_loader))         \
-                        + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)    \
-                        + 'LOADED MODEL PARAMETERS: {}'.format(CHECKPOINT_PATH)),                 \
-        global_step = None, walltime = None)
+    writer.add_text(tag = 'StartingLogs',                                                                     \
+                    text_string = (   'BATCH SIZE: {}  \n'.format(batch_size)                                 \
+                                    + 'NUMBER OF EPOCHS: {}  \n'.format(epochs)                               \
+                                    + 'TRAINING ITERATIONS / EPOCH: {}  \n'.format(len(train_loader))         \
+                                    + 'VALIDATION ITERATIONS / EPOCH: {}  \n'.format(len(val_loader))         \
+                                    + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)    \
+                                    + 'LOADED MODEL PARAMETERS: {}'.format(CHECKPOINT_PATH)),                 \
+                    global_step = None, walltime = None)
 
     criterion = AELoss(pull_weight = 1e-1, push_weight = 1e-1)
 
@@ -99,7 +98,7 @@ def train(batch_size = 14, epochs = 40):
     for current_epoch in range(starting_epoch, epochs):
 
         writer.add_text(tag = 'RunningLogs', text_string = 'EPOCH: {}/{}'.format((current_epoch + 1), epochs), global_step = (current_epoch + 1), walltime = None)
-        
+               
         epoch_since = time.time()
 
         current_train_iter = 0
@@ -115,7 +114,6 @@ def train(batch_size = 14, epochs = 40):
                
                 model.train()
 
-                #for i in range(20):
                 for train_data in train_loader:
                     train_batch_since = time.time()
 
@@ -138,43 +136,28 @@ def train(batch_size = 14, epochs = 40):
                     running_train_loss += loss.item()
                     average_train_loss = running_train_loss / current_train_iter
 
-                    writer.add_scalar(tag = 'TrainRunLoss/EPOCH {}'.format(current_epoch + 1), scalar_value = loss.item(), global_step = current_train_iter)
+                    writer.add_scalar(tag = 'TrainRunAvgLoss/EPOCH {}'.format(current_epoch + 1), scalar_value = average_train_loss, global_step = current_train_iter)
                     
                     loss.backward(retain_graph = False)
             
                     optimizer.step()
             
                     train_time_elapsed = time.time() - train_batch_since
-           
-                    #print('-' * 30)
-                    #print('TRAINING BATCH TIME IN SEC: ' + str(train_time_elapsed))
-                    #print('-' * 30)
             
-                writer.add_scalar(tag = 'TrainAvgLoss', scalar_value = average_train_loss, global_step = (current_epoch + 1))
+                writer.add_scalar(tag = 'TrainEpochAvgLoss', scalar_value = average_train_loss, global_step = (current_epoch + 1))
 
-            # VALIDATION IN EVERY 6000 TRAIN ITERATION 
             elif phase == 'val':   
                 
                 model.eval()
                 
                 with torch.no_grad():
                     for val_data in val_loader:
-                    #for i in range(20):
 
                         val_batch_since = time.time()
 
                         current_val_iter += 1
                         
                         images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = val_data
-
-                        '''
-                        try:
-                            images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = next(val_loader_iter)
-                        except StopIteration:
-                            val_loader_iter = iter(val_loader)
-                            images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = next(val_loader_iter)
-                        #images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = val_data
-                        '''
 
                         xs = [images, tl_tags, br_tags]
                         ys = [tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs]                    
@@ -186,13 +169,9 @@ def train(batch_size = 14, epochs = 40):
                         running_val_loss += val_loss.item()
                         average_val_loss = running_val_loss / current_val_iter
 
-                        writer.add_scalar(tag = 'ValRunLoss/EPOCH {}'.format((current_epoch + 1)), scalar_value = val_loss.item(), global_step = current_val_iter)
+                        writer.add_scalar(tag = 'ValRunAvgLoss/EPOCH {}'.format((current_epoch + 1)), scalar_value = average_val_loss, global_step = current_val_iter)
                         
-                        val_time_elapsed = time.time() - val_batch_since
-                        
-                        #print('-' * 30)
-                        #print('VALIDATION BATCH TIME IN SEC: ' + str(val_time_elapsed))
-                        #print('-' * 30)                                        
+                        val_time_elapsed = time.time() - val_batch_since                                      
                     
                     if(average_val_loss < best_average_val_loss):
                       writer.add_text(tag = 'ModelParams', text_string = '!!! SAVE !!!  \nPREVIOUS BEST AVERAGE VAL LOSS: {}  \nNEW BEST AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = (current_epoch + 1), walltime = None)
@@ -211,17 +190,17 @@ def train(batch_size = 14, epochs = 40):
                     else:
                       writer.add_text(tag = 'ModelParams', text_string = '!!! NO SAVE !!!  \nBEST AVERAGE VAL LOSS: {}  \nCURRENT AVERAGE VAL LOSS: {}'.format(best_average_val_loss, average_val_loss), global_step = (current_epoch + 1), walltime = None)
 
-                    writer.add_scalar(tag = 'ValAvgLoss', scalar_value = average_val_loss, global_step = (current_epoch + 1))
+                    writer.add_scalar(tag = 'ValEpochAvgLoss', scalar_value = average_val_loss, global_step = (current_epoch + 1))
 
         epoch_time_elapsed = time.time() - epoch_since
 
-        print('-' * 30)
-        print('AVERAGE TRAINING LOSS: ' + str(average_train_loss))
-        print('BEST AVERAGE VAL LOSS: ' + str(best_average_val_loss))
-        print('CURRENT AVERAGE VAL LOSS: ' + str(average_val_loss))
-        print('EPOCH TIME IN MINUTES: ' + str(epoch_time_elapsed // 60))
-        print('EPOCH TIME IN HOURS: ' + str(epoch_time_elapsed // 60 / 60))
-        print('-' * 30)     
+        writer.add_text(tag = 'RunningLogs',                                                                      \
+                        text_string = (   'CURRENT AVERAGE TRAINING LOSS: {}  \n'.format(average_train_loss)      \
+                                        + 'CURRENT AVERAGE VALIDATION LOSS: {}  \n'.format(average_val_loss)      \
+                                        + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)    \
+                                        + 'EPOCH TIME IN MINUTES: {}  \n'.format(epoch_time_elapsed // 60)        \
+                                        + 'EPOCH TIME IN HOURS: {}  \n'.format(epoch_time_elapsed // 60 / 60)),   \
+                        global_step = (current_epoch + 1), walltime = None)
 
 if __name__ == "__main__":
     train()
