@@ -3,7 +3,7 @@ import torch.nn as nn
 from Hourglass_module import kp_module
 from Corner_pooling import CornerPool_module
 from utils import convolution, residual, make_layer, make_kp_layer, make_layer_revr, make_merge_layer, make_pool_layer, make_unpool_layer,\
-                    make_cnv_layer, make_inter_layer, _tranpose_and_gather_feat
+                    make_cnv_layer, make_inter_layer, _tranpose_and_gather_feat, _decode
 
 n = 5
 dims    = [256, 256, 384, 384, 384, 512]
@@ -107,59 +107,91 @@ class kp(nn.Module):
 
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, *xs):
-        image   = xs[0]
-        tl_inds = xs[1]
-        br_inds = xs[2]
+    def forward(self, *xs, mode, ae_threshold = 0.5, top_k = 100, kernel = 3):
+        if mode == 'Train':
+            image   = xs[0]
+            tl_inds = xs[1]
+            br_inds = xs[2]
 
-        inter = self.pre(image)
-        #print('inter_done:{} '.format(inter.shape))
-        outs  = []
+            inter = self.pre(image)
 
-        layers = zip(
-            self.kps, self.cnvs,
-            self.corner_pools,
-            self.tl_heats, self.br_heats,
-            self.tl_tags, self.br_tags,
-            self.tl_regrs, self.br_regrs
-        )
-        for ind, layer in enumerate(layers):
-            kp_, cnv_                       = layer[0:2]
-            corner_pools_                   = layer[2]
-            tl_heat_, br_heat_              = layer[3:5]
-            tl_tag_, br_tag_                = layer[5:7]
-            tl_regr_, br_regr_              = layer[7:9]
+            outs  = []
 
-            kp = kp_(inter)
-            #print('Hourglass_module_done:{} '.format(Hourglass_module.shape))
-            cnv = cnv_(kp)
-            #print('cnv_done:{} '.format(cnv.shape))
-            tl_cnv, br_cnv = corner_pools_(cnv)
-            #print('corner_pools_done:{}, {} '.format(tl_cnv.shape, br_cnv.shape))
-            
-            tl_heat, br_heat = tl_heat_(tl_cnv), br_heat_(br_cnv)
-            #print('heat_done:{}, {} '.format(tl_heat.shape, br_heat.shape))
-            tl_tag,  br_tag  = tl_tag_(tl_cnv),  br_tag_(br_cnv)
-            #print('tag_done:{}, {} '.format(tl_tag.shape, br_tag.shape))
-            tl_regr, br_regr = tl_regr_(tl_cnv), br_regr_(br_cnv)
-            #print('regr_done:{}, {} '.format(tl_regr.shape, br_regr.shape))
+            layers = zip(
+                self.kps, self.cnvs,
+                self.corner_pools,
+                self.tl_heats, self.br_heats,
+                self.tl_tags, self.br_tags,
+                self.tl_regrs, self.br_regrs
+            )
+            for ind, layer in enumerate(layers):
+                kp_, cnv_                       = layer[0:2]
+                corner_pools_                   = layer[2]
+                tl_heat_, br_heat_              = layer[3:5]
+                tl_tag_, br_tag_                = layer[5:7]
+                tl_regr_, br_regr_              = layer[7:9]
 
-            tl_tag  = _tranpose_and_gather_feat(tl_tag, tl_inds)
-            #print('tl_tag_transpose_done:{} '.format(tl_tag.shape))
-            br_tag  = _tranpose_and_gather_feat(br_tag, br_inds)
-            #print('br_tag_transpose_done:{} '.format(br_tag.shape))
-            tl_regr = _tranpose_and_gather_feat(tl_regr, tl_inds)
-            #print('tl_regr_transpose_done:{} '.format(tl_regr.shape))
-            br_regr = _tranpose_and_gather_feat(br_regr, br_inds)
-            #print('br_regr_transpose_done:{} '.format(br_regr.shape))
+                kp = kp_(inter)        
+                cnv = cnv_(kp)
+                
+                tl_cnv, br_cnv = corner_pools_(cnv)
+                
+                tl_heat, br_heat = tl_heat_(tl_cnv), br_heat_(br_cnv) 
+                tl_tag,  br_tag  = tl_tag_(tl_cnv),  br_tag_(br_cnv)  
+                tl_regr, br_regr = tl_regr_(tl_cnv), br_regr_(br_cnv)
 
-            outs += [tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr]
+                tl_tag  = _tranpose_and_gather_feat(tl_tag, tl_inds)
+                br_tag  = _tranpose_and_gather_feat(br_tag, br_inds)
+                tl_regr = _tranpose_and_gather_feat(tl_regr, tl_inds)
+                br_regr = _tranpose_and_gather_feat(br_regr, br_inds)
 
-            if ind < self.nstack - 1:
-                inter = self.inters_[ind](inter) + self.cnvs_[ind](cnv)
-                inter = self.relu(inter)
-                inter = self.inters[ind](inter)
-                #print('inter_change_done')
-        return outs
+
+                outs += [tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr]
+
+                if ind < self.nstack - 1:
+                    inter = self.inters_[ind](inter) + self.cnvs_[ind](cnv)
+                    inter = self.relu(inter)
+                    inter = self.inters[ind](inter)
+    
+            return outs
+        
+        elif mode == 'mAP':
+            image = xs[0]
+
+            inter = self.pre(image)
+            outs  = []
+
+            layers = zip(
+                self.kps, self.cnvs,
+                self.corner_pools,
+                self.tl_heats, self.br_heats,
+                self.tl_tags, self.br_tags,
+                self.tl_regrs, self.br_regrs
+            )
+            for ind, layer in enumerate(layers):
+                kp_, cnv_                       = layer[0:2]
+                corner_pools_                   = layer[2]
+                tl_heat_, br_heat_              = layer[3:5]
+                tl_tag_, br_tag_                = layer[5:7]
+                tl_regr_, br_regr_              = layer[7:9]
+
+                kp  = kp_(inter)
+                cnv = cnv_(kp)
+
+                if ind == self.nstack - 1:
+                    tl_cnv, br_cnv = corner_pools_(cnv)
+
+                    tl_heat, br_heat = tl_heat_(tl_cnv), br_heat_(br_cnv)
+                    tl_tag,  br_tag  = tl_tag_(tl_cnv),  br_tag_(br_cnv)
+                    tl_regr, br_regr = tl_regr_(tl_cnv), br_regr_(br_cnv)
+
+                    outs += [tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr]
+
+                if ind < self.nstack - 1:
+                    inter = self.inters_[ind](inter) + self.cnvs_[ind](cnv)
+                    inter = self.relu(inter)
+                    inter = self.inters[ind](inter)
+
+            return _decode(*outs[-6:], ae_threshold = ae_threshold, K = top_k, kernel = kernel)
 
 #Hourglass = Hourglass_module(n = n, dims = dims, modules = modules)
