@@ -6,11 +6,13 @@ import json
 import os
 from os.path import exists, splitext, isdir, isfile, join, split, dirname
 import sys
-#sys.path.append('../)
 #from pprint import pprint
 import numpy as np
 import torch
+import torchvision.transforms as Transforms
+from torchvision.utils import make_grid
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 import math
 from CornerNet import kp
 import cv2
@@ -27,41 +29,44 @@ categories = [  'bus',
                 'train',
                 'rider' ]
 
-categories_dict = { 'bus': 1,
-                    'traffic light': 2,
-                    'traffic sign': 3,
-                    'person': 4,
-                    'bicycle': 5,
-                    'truck': 6,
-                    'motorcycle': 7,
-                    'car': 8,
-                    'train': 9,
-                    'rider': 10 }
-# Windows
-#train_annotation_path = "C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//labels//bdd100k_labels_images_train.json"
-#val_annotation_path = "C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//labels//bdd100k_labels_images_val.json"
-#train_image_root = "C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//images//100k//train//"
-#val_image_root = "C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//images//100k//val//"
+categories_dict = { 'bus': 0,
+                    'traffic light': 1,
+                    'traffic sign': 2,
+                    'person': 3,
+                    'bicycle': 4,
+                    'truck': 5,
+                    'motorcycle': 6,
+                    'car': 7,
+                    'train': 8,
+                    'rider': 9 }
 
-# Google Colab
-#train_annotation_path = "/content/bdd100k_labels_images_train.json"
-#val_annotation_path = "/content/bdd100k_labels_images_val.json"
-#train_image_root = "/content/train/"
-#val_image_root = "/content/val/"
+reverse_categories_dict = { 0: 'bus',
+                            1: 'traffic light',
+                            2: 'traffic sign',
+                            3: 'person',
+                            4: 'bicycle',
+                            5: 'truck',
+                            6: 'motorcycle',
+                            7: 'car',
+                            8: 'train',
+                            9: 'rider' }
 
 # Docker
-train_annotation_path = "../BDD100K/bdd100k_labels_images_train.json"
-val_annotation_path = "../BDD100K/bdd100k_labels_images_val.json"
+train_annotation_path = "../BDD100K/bdd100k_labels_images_train.json"           # bdd100k_labels_images_train.json[0:60000]
+val_annotation_path = "../BDD100K/bdd100k_labels_images_val.json"               # bdd100k_labels_images_train.json[60000:]
+test_annotation_path = "../BDD100K/bdd100k_labels_images_test.json"             # bdd100k_labels_images_val.json
 train_image_root = "../BDD100K/train/"
 val_image_root = "../BDD100K/val/"
 
-def get_annotations(mode):
-    
+def get_annotations(mode):   
     if mode == 'Train':
         with open(train_annotation_path) as f:
             annotation_file = json.load(f)
     elif mode == 'Val':
         with open(val_annotation_path) as f:
+            annotation_file = json.load(f)
+    elif mode == 'Test':
+        with open(test_annotation_path) as f:
             annotation_file = json.load(f)
     
     image_names = []
@@ -86,36 +91,140 @@ def get_annotations(mode):
                 detections[one_image_dets["name"]].append(one_object_)
     
     return image_names, detections
-
+    
 def get_image(mode, name):
     if mode == 'Train':
         image_path = train_image_root + name
     elif mode == 'Val':
+        image_path = train_image_root + name
+    elif mode == 'Test':
         image_path = val_image_root + name
     
     image = io.imread(image_path)
 
     return image
 
-def _resize_image(image, size):
-    #detection    = detection.copy()
-    #print(len(detection), detection)
+def resize_image(image, size, detections = None, with_detections = False):
     height, width = image.shape[0:2]
-    new_height, new_width = size
-
-    image = cv2.resize(image, (new_width, new_height))
+    new_height = size[0]
+    new_width  = size[1]
     
-    '''
-    height_ratio = new_height / height
-    width_ratio  = new_width  / width
-    for i in range(len(detection)):
-        #print(detection[i][1:5:2])
-        detection[i][1] *= width_ratio
-        detection[i][3] *= width_ratio
-        detection[i][2] *= height_ratio
-        detection[i][4] *= height_ratio
-    '''
-    return image#, detection
+    resized_image = cv2.resize(image, (new_width, new_height), interpolation = cv2.INTER_LANCZOS4)    
+    
+    if with_detections == True:
+        resized_detections = detections.copy()
+
+        height_ratio = new_height / height
+        width_ratio  = new_width  / width
+
+        resized_detections[:, 1:5:2] = (resized_detections[:, 1:5:2] * width_ratio)
+        resized_detections[:, 2:5:2] = (resized_detections[:, 2:5:2] * height_ratio)
+       
+        return resized_image, resized_detections
+    else:
+        return resized_image
+
+def calculate_iou(startpoint, new_size, detections):
+    x, y = startpoint
+    new_height, new_width = new_size
+
+    clipped_detections = detections.copy()
+
+    clipped_detections[:, 1:5:2] = np.clip(clipped_detections[:, 1:5:2], (x + 1), (x + new_width - 1))
+    clipped_detections[:, 2:5:2] = np.clip(clipped_detections[:, 2:5:2], (y + 1), (y + new_height - 1))
+
+    intersection = np.multiply(np.subtract(clipped_detections[:, 3], clipped_detections[:, 1]), np.subtract(clipped_detections[:, 4], clipped_detections[:, 2]))    # Clipped objektumok területe
+
+    union = np.multiply(np.subtract(detections[:, 3], detections[:, 1]), np.subtract(detections[:, 4], detections[:, 2]))                                           # Az objektumok eredeti területe
+
+    ious = np.divide(intersection, union)
+
+    return ious, clipped_detections   
+
+def random_zoom(image, detections, size):
+    scale  = np.random.uniform(0.25, 0.75)              
+
+    height = int(image.shape[0] * scale)                  # A kivágott kép az eredeti méret (0.25 ... 0.75)-szerese
+    width  = int(image.shape[1] * scale)
+
+    x = np.random.randint(0, image.shape[1] - width)      # A kivágott kép kezdőpontjának (bal felső sarok) koordinátája
+    y = np.random.randint(0, image.shape[0] - height)
+
+    image = image[y:y+height, x:x+width, :]               # A kivágott kép előállítása
+
+    clipped_detections = detections.copy()
+
+    ious, clipped_detections = calculate_iou(startpoint = (x,y), new_size = (height, width), detections = clipped_detections)
+    
+    keep_inds  = (ious >= 0.1)                                           # Az (iou < 0.1)-tel rendelkező objektumok elhagyása    
+    clipped_detections = clipped_detections[keep_inds]
+    
+    clipped_detections[:, 1:5:2] = (clipped_detections[:, 1:5:2] - x)    # Az új kezdőponthoz illesztjük az objektumokat
+    clipped_detections[:, 2:5:2] = (clipped_detections[:, 2:5:2] - y)
+    
+    resized_image, resized_detections = resize_image(image = image, size = size, detections = clipped_detections, with_detections = True)
+
+    return resized_image, resized_detections
+
+def clip_detections(image, detections):
+    detections    = np.array(detections.copy())
+    height, width = image.shape[0:2]
+
+    detections[:, 1:5:2] = np.clip(detections[:, 1:5:2], 0, width - 1)
+    detections[:, 2:5:2] = np.clip(detections[:, 2:5:2], 0, height - 1)
+    
+    return list(detections)
+
+def generate_annotated_image(image, detections):
+    num_categories = 10
+
+    top_bboxes = []
+    for i in range(num_categories):
+        cat_bboxes = []
+        for j, det in enumerate(detections):
+            if (det[0] == i):
+                cat_bboxes.append(det[1:])
+        
+        cat_bboxes = np.array(cat_bboxes)
+        top_bboxes.append(cat_bboxes)
+    
+    annot_image = image
+
+    for i in range(0, num_categories):
+        #keep_inds = (top_bboxes[j][:, -1])
+        cat_name  = reverse_categories_dict[i]
+        cat_size  = cv2.getTextSize(cat_name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+        color     = np.random.random((3, )) * 0.6 + 0.4
+        color     = color * 255
+        color     = color.astype(np.int32).tolist()
+        for bbox in top_bboxes[i]:
+            bbox  = ((bbox[0:4])).astype(np.int32) #*8 nem is kell?
+            if bbox[1] - cat_size[1] - 2 < 0:
+                cv2.rectangle(annot_image,
+                    (bbox[0], bbox[1] + 2),
+                    (bbox[0] + cat_size[0], bbox[1] + cat_size[1] + 2),
+                    color, -1
+                )
+                cv2.putText(annot_image, cat_name, 
+                    (bbox[0], bbox[1] + cat_size[1] + 2), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness = 1
+                )
+            else:
+                cv2.rectangle(annot_image,
+                    (bbox[0], bbox[1] - cat_size[1] - 2),
+                    (bbox[0] + cat_size[0], bbox[1] - 2),
+                    color, -1
+                )
+                cv2.putText(annot_image, cat_name, 
+                    (bbox[0], bbox[1] - 2), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness = 1
+                )
+            cv2.rectangle(annot_image,
+                (bbox[0], bbox[1]),
+                (bbox[2], bbox[3]),
+                color, 2
+            )
+    return annot_image
 
 def gaussian_radius(det_size, min_overlap):
     height, width = det_size
@@ -142,7 +251,7 @@ def gaussian_radius(det_size, min_overlap):
 
 def draw_gaussian(heatmap, center, radius, k = 1):
     diameter = 2 * radius + 1
-    gaussian = gaussian2D((diameter, diameter), sigma=diameter / 6)
+    gaussian = gaussian2D((diameter, diameter), sigma = diameter / 6)
 
     x, y = center
 
@@ -174,31 +283,63 @@ class Dataset(Dataset):
 
         self.gaussian_bump = True
         self.gaussian_iou = 0.7
-        self.gaussian_rad = -1   
-        #self.input_size = [384, 640]    # Original_input_size / 2 (+ height_padding)
-        self.input_size = [768, 1280]
-        self.output_size = [96, 160]    # Original_input_size / 8 (+ height_padding)
+        self.gaussian_rad = -1    
+        self.orig_size = [720, 1280]
+        self.input_size = [384, 640]     # Original_input_size / 2 (with modified height, that is essential for the network)
+        self.output_size = [96, 160]     # Original_input_size / 8 
         self.num_categories = 10
         self.max_tag_len = 160
+        self.ColorJitter = Transforms.ColorJitter(brightness = 0.3, contrast = 0.4, saturation = 0.4, hue = 0.2)
 
     def __getitem__(self, index):
         name = self.image_names[index]
-        #print(name)
-        detection = self.detections[name]
-        #print('Number of objects on the image: {}'.format(len(detection)))
-        #print('GT boxes in the image:\n{}'.format(detection))
+
+        detection = self.detections[name].copy()
         
         image = get_image(mode = self.mode, name = name)
 
-        images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = self.transform(image = image, detection = detection)
+        orig_image = image.copy()
+        orig_detection = detection.copy()      
+        
+        if self.mode == 'Train':
+            image, detection = self.random_transforms(image, detection)
 
-        return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs#, name
+        orig_image        = generate_annotated_image(orig_image, orig_detection) 
+        transformed_image = generate_annotated_image(image, detection)        
 
-    def transform(self, image, detection):
-        npad = ((0, 48), (0, 0), (0, 0))
-        image = np.pad(image, pad_width = npad, mode = 'constant', constant_values = 0)     # this does not effect the annotations   
+        images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = self.create_groundtruth(image = image, detection = detection)
 
-        image = _resize_image(image = image, size = (384, 640))             
+        return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, name, orig_image, transformed_image
+    
+    def random_transforms(self, image, detection):
+        detection = np.array(detection)
+        
+        # Random zoom
+        if (np.random.uniform() > 0.5):
+            image, detection = random_zoom(image, detection, size = self.orig_size)
+            #print('RANDOM ZOOM!')
+        
+        # Random horizontal flip (random mirror)
+        if (np.random.uniform() > 0.5):
+            image[:] = image[:, ::-1, :]
+            width = detection[:, 3] - detection[:, 1]
+            detection[:, 1:5:2] = self.orig_size[1] - detection[:, 1:5:2]
+            detection[:, 1] -= width[:]                                         # Top-Right corner --> Top-Left corner
+            detection[:, 3] += width[:]                                         # Bottom-Left corner --> Bottom-Right corner
+            #print('RANDOM MIRROR!')
+        
+        # Random Color Jitter
+        if (np.random.uniform() > 0.5):
+            image = Image.fromarray(image)            
+            image = self.ColorJitter(image)
+            image = np.array(image)
+            #print('RANDOM COLOR JIT!')
+        
+        return image, detection
+
+    def create_groundtruth(self, image, detection):
+        detection = clip_detections(image = image, detections = detection)
+        image = resize_image(image = image, size = self.input_size)     # GT Detections are still original sized
 
         tl_heatmaps = np.zeros((self.num_categories, self.output_size[0], self.output_size[1]), dtype = np.float32)
         br_heatmaps = np.zeros((self.num_categories, self.output_size[0], self.output_size[1]), dtype = np.float32)
@@ -209,17 +350,14 @@ class Dataset(Dataset):
         tag_masks   = np.zeros((self.max_tag_len), dtype = np.uint8)
         tag_lens    = np.zeros((1, ), dtype = np.int32)
 
-        width_ratio  = self.output_size[1] / self.input_size[1] # 1/8
-        height_ratio = self.output_size[0] / self.input_size[0]
-
+        width_ratio  = self.output_size[1] / self.orig_size[1] # 1/8
+        height_ratio = self.output_size[0] / self.orig_size[0]
+        
         for ind, det in enumerate(detection):
-            #print("haaaaaaaaaaaaa: " + str(det))
-            category = int(det[0]) - 1
+            category = int(det[0]) #- 1
 
             xtl, ytl = det[1], det[2]   # Original sized coordinates
             xbr, ybr = det[3], det[4]
-
-            #print(xtl, ytl, xbr, ybr)
 
             fxtl = (xtl * width_ratio)  # 1/8 sized coodinates (float numbers)
             fytl = (ytl * height_ratio)
@@ -230,8 +368,6 @@ class Dataset(Dataset):
             ytl = int(fytl) 
             xbr = int(fxbr) 
             ybr = int(fybr)
-
-            #print(xtl, (fxtl-xtl), ytl, (fytl-ytl), xbr, (fxbr-xbr), ybr, (fybr-ybr)) 
 
             if self.gaussian_bump:
                 width  = det[3] - det[1]    # Original width
@@ -253,19 +389,18 @@ class Dataset(Dataset):
                 br_heatmaps[category, ybr, xbr] = 1
 
             tag_ind = tag_lens[0]
-            #print('TAG_IND: {}'.format(tag_ind))
+
             tl_regrs[tag_ind, :] = [fxtl - xtl, fytl - ytl]
-            #print('TL_REGRS[tag_ing]: {}'.format(tl_regrs[tag_ind]))
             br_regrs[tag_ind, :] = [fxbr - xbr, fybr - ybr]
+
             tl_tags[tag_ind] = ytl * self.output_size[1] + xtl
-            #print('TL_TAGS[tag_ing]: {}'.format(tl_tags[tag_ind]))
             br_tags[tag_ind] = ybr * self.output_size[1] + xbr
+
             tag_lens[0] += 1
         
         tag_len = tag_lens[0]
-        #print("tag_len:{} ".format(tag_len))
+
         tag_masks[:tag_len] = 1
-        #print("tag_masks_shape:{}, tag_masks:{} ".format(tag_masks.shape, tag_masks))
 
         images      = torch.from_numpy(image / 255.0).float().to(device = self.device).permute(2, 0, 1)
         tl_heatmaps = torch.from_numpy(tl_heatmaps).to(device = self.device)
@@ -276,260 +411,31 @@ class Dataset(Dataset):
         br_tags     = torch.from_numpy(br_tags).to(device = self.device)
         tag_masks   = torch.from_numpy(tag_masks).to(device = self.device)
 
-        #print('GT_TL_HEAT_IN_DATASET:\n{}'.format(tl_heatmaps.sum()))
-        #print('GT_BR_HEAT_IN_DATASET:\n{}'.format(br_heatmaps.sum()))
-
         return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs
 
     def __len__(self): 
       return len(self.image_names)
 
 
-
 if __name__ == "__main__":
-
-    n = 5
-    dims    = [256, 256, 384, 384, 384, 512]
-    modules = [2, 2, 2, 2, 2, 4]
-    out_dim = 10
-
-    model = kp(n = n, nstack = 2, dims = dims, modules = modules, out_dim = out_dim).eval().cpu()
-
     '''
-    model_dict = model.state_dict()
-    print('Model_dict_len: ' + str(len(model_dict)))
-    #print(model_dict)
-
-    print('MODEL DICT DONE !!')
+    dataset = Dataset(mode = 'Train')
     
-    #CHECKPOINT_PATH = 'C://Users//Tony Stark//Desktop//Önálló laboratórium//Code//CornerNet//pretrained_cornernet.pkl'
-    CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/CornerNet_500000.pkl'
-    pretrained_dict = torch.load(CHECKPOINT_PATH)
-    print('PRETRAINED DICT DONE !!')
-
-    prefix = 'module.'
-    n_clip = len(prefix)
-    adapted_dict = {k[n_clip:]: v for k, v in pretrained_dict.items()
-                if (k.startswith(prefix + 'pre') or k.startswith(prefix + 'kps') or k.startswith(prefix + 'inter') or k.startswith(prefix + 'cnv'))}
-    print('ADAPTED_dict_len: ' + str(len(adapted_dict)))
-    '''
-
-    '''
-    for k, v in adapted_dict.items():
-        print(k)
-    '''
-
-    # Checking adapted_dict and pretrained_dict equality
-    #for k, v in zip(pretrained_dict.items(), adapted_dict.items()):
-    #    if(torch.equal(k[1], v[1])):
-    #        print('EQUAL!')
-
-    '''
-    for k, v in zip(model_dict.items(), adapted_dict.items()):
-        if k in model_dict:
-            pretrained_dict = {k: v}
-            print(k)
-        print(k[0], v[0])
-        j = v[0].split('.', 1)[1]
-        v[0] = j
-        print(k[0], v[0])
-    '''
-    '''
-    #pretrained_dict = {k: v for k, v in adapted_dict.items() if k in model_dict}
-    #model_dict.update(adapted_dict)
-    model.load_state_dict(adapted_dict, strict = False)
-
-    model.cuda()
-
-    model_dict_2 = model.state_dict()
-    print('Model_dict_2_len: ' + str(len(model_dict_2)))
-
-    count = 0
-    for name, param in model_dict_2.items():
-        if name not in adapted_dict:
-            continue
-        #print(model_dict_2[name])
-        if(torch.equal(adapted_dict[name], param)):
-            print(name)
-            count += 1
-    print('LOADED PARAMS COUNT: ' + str(count))
-    '''
-
-    '''
-    for k, v in zip(model_dict_2.items(), adapted_dict.items()):
-        if(torch.equal(k[1], v[1])):
-            print('EQUAL!')
-    '''
-
-    CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/ModelParams/pretrained_cornernet.pth'
-    pretrained_dict = torch.load(CHECKPOINT_PATH)
-    print('PRETRAINED DICT DONE !!')
-
-    model.load_state_dict(pretrained_dict['model_state_dict'])#, strict = False)
-    model.cuda()
-
-    index = 32234
-
-    dataset = Dataset(mode = 'Val')
-
-    dataloader = DataLoader(dataset = dataset, batch_size = 2 ,shuffle = True)
-
+    dataloader = DataLoader(dataset, batch_size = 4, shuffle = True)
     loader_iter = iter(dataloader)
 
-    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = next(loader_iter)
+    writer = SummaryWriter('logs/imagetest/')    
 
-    xs = [images, tl_tags, br_tags]
-    ys = [tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs]
-
-    print('------- DATASET OUTPUT SHAPES -------')
-    print(images.shape)
-    print(tl_tags.shape)
-    print(br_tags.shape)
-    print(tl_heatmaps.shape)
-    print(br_heatmaps.shape)
-    print(tag_masks.shape)
-    print(tl_regrs.shape)
-    print(br_regrs.shape)
-
-
-    outs = model(*xs)
+    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images, transformed_images = next(loader_iter)
+  
+    concat_image = torch.cat(((transformed_images/255.0).permute(0,3,1,2), (orig_images/255.0).permute(0,3,1,2)), 0)
+  
+    grid_image = make_grid(tensor = concat_image, nrow = 4, padding = 10, pad_value = 55.0)
+  
+    writer.add_images('lolka', grid_image, 0, dataformats='CHW')
     
-    tl_heat = outs[0]
-    br_heat = outs[1]
-    tl_tag = outs[2]
-    br_tag = outs[3]
-    tl_regr = outs[4]
-    br_regr = outs[5]
-
-    print('------- CORNERNET MODEL OUTPUT SHAPES -------')
-    print(tl_heat.shape)
-    print(br_heat.shape)
-    print(tl_tag.shape)
-    print(br_tag.shape)
-    print(tl_regr.shape)
-    print(br_regr.shape)
-
-    loss_model = AELoss(pull_weight = 1e-1, push_weight = 1e-1)
-
-    loss = loss_model(outs, ys)
-
-    print('-----------------LOSS DONE--------------------')
-    print('loss_shape:{}, loss:{} '.format(loss.shape, loss))
+    writer.close()
     '''
-    PATH = '/content/drive/My Drive/CornerNet/ModelParams/pretrained_cornernet.pth'                        
-    torch.save({
-                #'epoch': current_epoch,
-                #'iter': current_train_iter,
-                'model_state_dict': model.state_dict()#,
-                #'optimizer_state_dict': optimizer.state_dict(),
-                #'train_loss': train_loss,
-                #'val_loss': current_average_val_loss
-                }, PATH)
-
-    print('!! SAVE DONE !!')
-    
-    
-    #tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr
-    #images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = dataset.__getitem__(index)
-    '''
-
-
-
-
-    '''
-    image_names, detections = get_annotations('Train')
-    index = 32234
-    name = image_names[index]
-
-    print(detections[name])
-
-    image = get_image('Train', name)
-
-    print(len(image_names))
-    print(image_names[index])
-    print(len(detections))
-
-    #index = 1575
-    #val_image_paths = glob.glob("C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//images//100k//val//*.jpg")
-    train_image_paths = glob.glob("C://Users//Tony Stark//Desktop//Önálló laboratórium//bdd100k//images//100k//train//*.jpg")
-    #name = (val_image_paths[index].rsplit('.', 1)[0]).rsplit('\\', 1)[1]
-    #name = val_image_paths[index].rsplit('\\', 1)[1]
-    
-   
-        
- 
-        #image = io.imread(image_path)
-        
-    test = plt.figure('test_image')
-        #image_numpy = image.permute(1,2,0).numpy()/255.0
-    plt.imshow(image)
-    
-    plt.show()
-    '''
-
-        #print(len(detections))
-        #print(detections[name])
-        #print(detections[name][0])
-        #print(detections[name][0][2])
-    '''
-
- tensor_obs = torch.tensor((obs / 255.0), device = self.device).permute(2,0,1).float()
-      tensor_next_obs = torch.tensor((next_obs / 255.0), device = self.device).permute(2,0,1).float()
-      tensor_rew=torch.tensor(rew, device = self.device)
-      tensor_act=torch.tensor(act, device = self.device)
-      tensor_term=torch.tensor(term, device = self.device)
-
-      return tensor_obs, tensor_rew, tensor_act, tensor_term, tensor_next_obs
-'''
-
-'''
-# Tanító adathalmaz letöltése
-export trainimagesid=1MymWKQUFCENauQP8A6QRk1EglinAKaud
-export trainimagesfilename=train.zip
-wget --save-cookies trainimagescookies.txt 'https://docs.google.com/uc?export=download&id='$trainimagesid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > trainimagesconfirm.txt
-wget --load-cookies trainimagescookies.txt -O $trainimagesfilename \
-     'https://docs.google.com/uc?export=download&id='$trainimagesid'&confirm='$(<trainimagesconfirm.txt)
-
-
-# Validációs adathalmaz letöltése
-export valimagesid=1zgutvylvwv4CFz7rzlPFsL5mrTFHuqFG
-export valimagesfilename=val.zip
-wget --save-cookies valimagescookies.txt 'https://docs.google.com/uc?export=download&id='$valimagesid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > valimagesconfirm.txt
-wget --load-cookies valimagescookies.txt -O $valimagesfilename \
-     'https://docs.google.com/uc?export=download&id='$valimagesid'&confirm='$(<valimagesconfirm.txt)
-
-
-# Tanító annotáció letöltése
-export trainannotationid=1JLkStcXlhVzvB7Fns-c2Wy_94j8NH75R
-export trainannotationfilename=bdd100k_labels_images_train.json
-wget --save-cookies trainannotationcookies.txt 'https://docs.google.com/uc?export=download&id='$trainannotationid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > trainannotationconfirm.txt
-wget --load-cookies trainannotationcookies.txt -O $trainannotationfilename \
-     'https://docs.google.com/uc?export=download&id='$trainannotationid'&confirm='$(<trainannotationconfirm.txt)
-
-
-# Validációs annotáció letöltése
-export valannotationid=1fj9Sg4v4TwSvD2nxs90uzNqZgVythxLS
-export valannotationfilename=bdd100k_labels_images_val.json
-wget --save-cookies valannotationcookies.txt 'https://docs.google.com/uc?export=download&id='$valannotationid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > valannotationconfirm.txt
-wget --load-cookies valannotationcookies.txt -O $valannotationfilename \
-     'https://docs.google.com/uc?export=download&id='$valannotationid'&confirm='$(<valannotationconfirm.txt)
-
-
-# Best ModelParams letöltése
-export modelparamsid=13tYTwt-1PL8e-tCBN8QBC2vCNmEgbkmu
-export modelparamsfilename=train_valid_pretrained_cornernet-epoch3-iter5067.pth
-wget --save-cookies modelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$modelparamsid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > modelparamsconfirm.txt
-wget --load-cookies modelparamscookies.txt -O $modelparamsfilename \
-     'https://docs.google.com/uc?export=download&id='$modelparamsid'&confirm='$(<modelparamsconfirm.txt)
-'''
-
-'''
-GT tenzorokat vizualizálni és megnézni, hogy jó e a vizualizáció 
-freezelni az eredeti súlyokat és ugy tanulni ==> nézni epochrol epochra a vizualizaciot
-8-adolás és kivonni belőle az egész részét
-'''
+    with open('../Detections/Hourglass/detections_test.json') as f:
+        detections_json = json.load(f) 
+    print(len(detections_json))  
