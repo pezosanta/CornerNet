@@ -13,6 +13,7 @@ import torchvision.transforms as Transforms
 from torchvision.utils import make_grid
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from test_v2 import generate_annotated_image
 import math
 from CornerNet import kp
 import cv2
@@ -39,17 +40,6 @@ categories_dict = { 'bus': 0,
                     'car': 7,
                     'train': 8,
                     'rider': 9 }
-
-reverse_categories_dict = { 0: 'bus',
-                            1: 'traffic light',
-                            2: 'traffic sign',
-                            3: 'person',
-                            4: 'bicycle',
-                            5: 'truck',
-                            6: 'motorcycle',
-                            7: 'car',
-                            8: 'train',
-                            9: 'rider' }
 
 # Docker
 train_annotation_path = "../BDD100K/bdd100k_labels_images_train.json"           # bdd100k_labels_images_train.json[0:60000]
@@ -130,8 +120,8 @@ def calculate_iou(startpoint, new_size, detections):
 
     clipped_detections = detections.copy()
 
-    clipped_detections[:, 1:5:2] = np.clip(clipped_detections[:, 1:5:2], (x + 1), (x + new_width - 1))
-    clipped_detections[:, 2:5:2] = np.clip(clipped_detections[:, 2:5:2], (y + 1), (y + new_height - 1))
+    clipped_detections[:, 1:5:2] = np.clip(clipped_detections[:, 1:5:2], x, x + new_width)
+    clipped_detections[:, 2:5:2] = np.clip(clipped_detections[:, 2:5:2], y, y + new_height)
 
     intersection = np.multiply(np.subtract(clipped_detections[:, 3], clipped_detections[:, 1]), np.subtract(clipped_detections[:, 4], clipped_detections[:, 2]))    # Clipped objektumok területe
 
@@ -168,63 +158,13 @@ def random_zoom(image, detections, size):
 
 def clip_detections(image, detections):
     detections    = np.array(detections.copy())
-    height, width = image.shape[0:2]
+    height, width = image.shape[0:2]                                      # (720 x 1280)
 
-    detections[:, 1:5:2] = np.clip(detections[:, 1:5:2], 0, width - 1)
-    detections[:, 2:5:2] = np.clip(detections[:, 2:5:2], 0, height - 1)
+    if detections.size != 0:
+        detections[:, 1:5:2] = np.clip(detections[:, 1:5:2], 0, (width - 1))
+        detections[:, 2:5:2] = np.clip(detections[:, 2:5:2], 0, (height - 1))
     
     return list(detections)
-
-def generate_annotated_image(image, detections):
-    num_categories = 10
-
-    top_bboxes = []
-    for i in range(num_categories):
-        cat_bboxes = []
-        for j, det in enumerate(detections):
-            if (det[0] == i):
-                cat_bboxes.append(det[1:])
-        
-        cat_bboxes = np.array(cat_bboxes)
-        top_bboxes.append(cat_bboxes)
-    
-    annot_image = image
-
-    for i in range(0, num_categories):
-        #keep_inds = (top_bboxes[j][:, -1])
-        cat_name  = reverse_categories_dict[i]
-        cat_size  = cv2.getTextSize(cat_name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-        color     = np.random.random((3, )) * 0.6 + 0.4
-        color     = color * 255
-        color     = color.astype(np.int32).tolist()
-        for bbox in top_bboxes[i]:
-            bbox  = ((bbox[0:4])).astype(np.int32) #*8 nem is kell?
-            if bbox[1] - cat_size[1] - 2 < 0:
-                cv2.rectangle(annot_image,
-                    (bbox[0], bbox[1] + 2),
-                    (bbox[0] + cat_size[0], bbox[1] + cat_size[1] + 2),
-                    color, -1
-                )
-                cv2.putText(annot_image, cat_name, 
-                    (bbox[0], bbox[1] + cat_size[1] + 2), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness = 1
-                )
-            else:
-                cv2.rectangle(annot_image,
-                    (bbox[0], bbox[1] - cat_size[1] - 2),
-                    (bbox[0] + cat_size[0], bbox[1] - 2),
-                    color, -1
-                )
-                cv2.putText(annot_image, cat_name, 
-                    (bbox[0], bbox[1] - 2), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness = 1
-                )
-            cv2.rectangle(annot_image,
-                (bbox[0], bbox[1]),
-                (bbox[2], bbox[3]),
-                color, 2
-            )
-    return annot_image
 
 def gaussian_radius(det_size, min_overlap):
     height, width = det_size
@@ -304,12 +244,12 @@ class Dataset(Dataset):
         if self.mode == 'Train':
             image, detection = self.random_transforms(image, detection)
 
-        orig_image        = generate_annotated_image(orig_image, orig_detection) 
-        transformed_image = generate_annotated_image(image, detection)        
+        orig_image        = generate_annotated_image(image = orig_image, detections = orig_detection, mode = 'GT') 
+        #transformed_image = generate_annotated_image(image = image, detections = detection, mode = 'GT')        
 
         images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = self.create_groundtruth(image = image, detection = detection)
 
-        return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, name, orig_image, transformed_image
+        return images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, name, orig_image#, transformed_image
     
     def random_transforms(self, image, detection):
         detection = np.array(detection)
@@ -335,7 +275,7 @@ class Dataset(Dataset):
             image = np.array(image)
             #print('RANDOM COLOR JIT!')
         
-        return image, detection
+        return image, list(detection)
 
     def create_groundtruth(self, image, detection):
         detection = clip_detections(image = image, detections = detection)
@@ -415,27 +355,3 @@ class Dataset(Dataset):
 
     def __len__(self): 
       return len(self.image_names)
-
-
-if __name__ == "__main__":
-    '''
-    dataset = Dataset(mode = 'Train')
-    
-    dataloader = DataLoader(dataset, batch_size = 4, shuffle = True)
-    loader_iter = iter(dataloader)
-
-    writer = SummaryWriter('logs/imagetest/')    
-
-    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images, transformed_images = next(loader_iter)
-  
-    concat_image = torch.cat(((transformed_images/255.0).permute(0,3,1,2), (orig_images/255.0).permute(0,3,1,2)), 0)
-  
-    grid_image = make_grid(tensor = concat_image, nrow = 4, padding = 10, pad_value = 55.0)
-  
-    writer.add_images('lolka', grid_image, 0, dataformats='CHW')
-    
-    writer.close()
-    '''
-    with open('../Detections/Hourglass/detections_test.json') as f:
-        detections_json = json.load(f) 
-    print(len(detections_json))  
