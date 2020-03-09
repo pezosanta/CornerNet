@@ -32,22 +32,22 @@ class left_pool_func(torch.autograd.Function):
         output = torch.zeros_like(input_)
         batch = input_.size(0)
         width = input_.size(3)
-  
-        input_tmp = input_.select(3, width-1)
+        
+        input_tmp = input_.index_select(3, torch.tensor([width-1]).cuda())
         #print("input_tmp shape:{}, input_tmp:{} ".format(input_tmp.shape, input_tmp))
-        output.select(3,width-1).copy_(input_tmp)
+        output.index_select(3,torch.tensor([width-1]).cuda()).copy_(input_tmp)
         #print("output_tmp shape:{}, output_tmp:{} ".format(output.shape, output))
         
         for idx in range(1, width):
-            input_tmp = input_.select(3,width-idx-1)
+            input_tmp = input_.index_select(3,torch.tensor([width-idx-1]).cuda())
             #print("i:{}, input_tmp_shape: {}, input_tmp:{}".format(idx, input_tmp.shape, input_tmp))
-            output_tmp = output.select(3,width-idx)
+            output_tmp = output.index_select(3,torch.tensor([width-idx]).cuda())
             #print("i:{}, output_tmp_shape: {}, output_tmp:{}".format(idx, output_tmp.shape, output_tmp))
             cmp_tmp = torch.cat((input_tmp.contiguous().view(batch,1,-1),output_tmp.contiguous().view(batch,1,-1)),1)
             #print("i:{}, cmp_tmp_shape: {}, cmp_tmp:{}".format(idx, cmp_tmp.shape, cmp_tmp))
             cmp_tmp_max = cmp_tmp.max(1)[0]
             #print("i:{}, cmp_tmp_max_shape: {}, cmp_tmp_max:{}".format(idx, cmp_tmp_max.shape, cmp_tmp_max))
-            output.select(3,width-idx-1).copy_(cmp_tmp_max.view_as(input_tmp))
+            output.index_select(3,torch.tensor([width-idx-1]).cuda()).copy_(cmp_tmp_max.view_as(input_tmp))
             #print("i:{}, output_shape: {}, output:{}".format(idx, output.shape, output))
          
         return output
@@ -63,24 +63,24 @@ class left_pool_func(torch.autograd.Function):
         w = input_.size(3)
         batch = input_.size(0)
         
-        output_tmp = res.select(3, w-1)
-        grad_output_tmp = grad_output.select(3, w-1)
+        output_tmp = res.index_select(3, torch.tensor([w-1]).cuda())
+        grad_output_tmp = grad_output.index_select(3, torch.tensor([w-1]).cuda())
         output_tmp.copy_(grad_output_tmp)
         
-        input_tmp = input_.select(3, w-1)
-        output.select(3,w-1).copy_(input_tmp)
+        input_tmp = input_.index_select(3, torch.tensor([w-1]).cuda())
+        output.index_select(3,torch.tensor([w-1]).cuda()).copy_(input_tmp)
         
         for idx in range(1, w):
             
-            input_tmp = input_.select(3, w-idx-1)
-            output_tmp = output.select(3,w-idx)
+            input_tmp = input_.index_select(3, torch.tensor([w-idx-1]).cuda())
+            output_tmp = output.index_select(3,torch.tensor([w-idx]).cuda())
             cmp_tmp = torch.cat((input_tmp.contiguous().view(batch,1,-1),output_tmp.contiguous().view(batch,1,-1)),1).max(1)[0]
-            output.select(3,w-idx-1).copy_(cmp_tmp.view_as(input_tmp))
+            output.index_select(3,torch.tensor([w-idx-1]).cuda()).copy_(cmp_tmp.view_as(input_tmp))
             
-            grad_output_tmp = grad_output.select(3, w-idx-1)
-            res_tmp = res.select(3,w-idx)
+            grad_output_tmp = grad_output.index_select(3, torch.tensor([w-idx-1]).cuda())
+            res_tmp = res.index_select(3,torch.tensor([w-idx]).cuda())
             com_tmp = comp(input_tmp,output_tmp,grad_output_tmp,res_tmp)
-            res.select(3,w-idx-1).copy_(com_tmp)
+            res.index_select(3,torch.tensor([w-idx-1]).cuda()).copy_(com_tmp)
         return res
 
 class top_pool_func(torch.autograd.Function):
@@ -271,6 +271,7 @@ class CornerPool_module(nn.Module):
         #self.right_pool = right_pool()
 
     def forward(self, x):
+        
         # Top-Left pooling
         conv3_bn_relu_in_T = self.conv3_bn_relu_in_T(x)
         top_pool = top_pool_func.apply(conv3_bn_relu_in_T)
