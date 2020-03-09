@@ -3,13 +3,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
+import numpy as np
 import time
 import glob
 import warnings
 from Dataset import Dataset
 from CornerNet import kp as cornernet
 from losses import AELoss
-from test_v2 import calculate_mAP, save_detections
+from test_v2 import generate_detections, save_detections, evaluate_detections, make_grid_image
 
 warnings.filterwarnings(action = 'once')
 
@@ -28,6 +29,11 @@ def train(batch_size = 14, epochs = 40):
     ae_threshold = 0.5
     nms_threshold = 0.5
     nms_kernel = 3
+    min_score = 0.3
+
+    # Hyperparams for calculating mAP
+    mean_ap_epoch_interval = 3
+    mean_ap_thresholds = [0.75]
  
     base_lr_rate = 0.00025
     weight_decay = 0.000016
@@ -39,20 +45,20 @@ def train(batch_size = 14, epochs = 40):
     writer = SummaryWriter('logs/hourglass/')
     '''
     ####################### LOAD CHECKPOINTS #######################
-    CHECKPOINT_PATH = '../ModelParams/Hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(4)
+    CHECKPOINT_PATH = '../ModelParams/Hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(11)
     checkpoint = torch.load(CHECKPOINT_PATH)
-    starting_epoch = 0 #checkpoint['epoch']
+    starting_epoch = 0 #checkpoint['epoch'] + 1
     starting_iter = 0 #checkpoint['iter'] + 1
     best_average_val_loss = checkpoint['val_loss']
     ################################################################    
     '''
     # Train Dataset and train dataloader
     train_dataset = Dataset(mode = 'Train')
-    train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle = False)
+    train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
     
     # Val Dataset and val dataloader
     val_dataset = Dataset(mode = 'Val')
-    val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = False)
+    val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
     mAP_dataset = Dataset(mode = 'Val')    
     mAP_loader = DataLoader(mAP_dataset, batch_size = 1, shuffle = False)
@@ -63,7 +69,7 @@ def train(batch_size = 14, epochs = 40):
     model = cornernet(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
 
     
-    # Load the original pretrained MSCOCO weights in the first epoch
+    # Load the original pretrained (on MSCOCO) weights in the first epoch
     CHECKPOINT_PATH = '../ModelParams/Hourglass/CornerNet_500000.pkl'
     pretrained_dict = torch.load(CHECKPOINT_PATH)
     prefix = 'module.'
@@ -86,13 +92,15 @@ def train(batch_size = 14, epochs = 40):
 
     #model.load_state_dict(checkpoint['model_state_dict'])
 
-    writer.add_text(tag = 'StartingLogs',                                                                     \
-                    text_string = (   'BATCH SIZE: {}  \n'.format(batch_size)                                 \
-                                    + 'NUMBER OF EPOCHS: {}  \n'.format(epochs)                               \
-                                    + 'TRAINING ITERATIONS / EPOCH: {}  \n'.format(len(train_loader))         \
-                                    + 'VALIDATION ITERATIONS / EPOCH: {}  \n'.format(len(val_loader))         \
-                                    + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)    \
-                                    + 'LOADED MODEL PARAMETERS: {}'.format(CHECKPOINT_PATH)),                 \
+    writer.add_text(tag = 'StartingLogs',                                                                           \
+                    text_string = (   'BATCH SIZE: {}  \n'.format(batch_size)                                       \
+                                    + 'NUMBER OF EPOCHS: {}  \n'.format(epochs)                                     \
+                                    + 'TRAINING ITERATIONS / EPOCH: {}  \n'.format(len(train_loader))               \
+                                    + 'VALIDATION ITERATIONS / EPOCH: {}  \n'.format(len(val_loader))               \
+                                    + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)          \
+                                    + 'LOADED MODEL PARAMETERS: {}  \n'.format(CHECKPOINT_PATH))                    \
+                                    + 'MEAN AP CALCULATION EPOCH INTERVAL: {}  \n'.format(mean_ap_epoch_interval)   \
+                                    + 'MEAN AP IOU THRESHOLD: {}'.format(mean_ap_thresholds[0]),                    \
                     global_step = None, walltime = None)
 
     criterion = AELoss(pull_weight = 1e-1, push_weight = 1e-1)
@@ -106,22 +114,24 @@ def train(batch_size = 14, epochs = 40):
     #        state[k] = v.cuda()
 
     for current_epoch in range(starting_epoch, epochs):
-        print('STAAAAAAAAAAAAAAAAAAAAAAAAAAAAAART')
 
         writer.add_text(tag = 'RunningLogs', text_string = 'EPOCH: {}/{}'.format((current_epoch + 1), epochs), global_step = (current_epoch + 1), walltime = None)
                
         epoch_since = time.time()
 
-        detections_json = []
+        detections_json         = []
+        pred_detections_images  = []
+        gt_detections_images    = []
 
-        current_train_iter = 0
-        current_val_iter = 0
-        current_mAP_iter = 0
+
+        current_train_iter      = 0
+        current_val_iter        = 0
+        current_mAP_iter        = 0
         
-        running_train_loss = 0.0
-        average_train_loss = 0.0
-        running_val_loss = 0.0
-        average_val_loss = 0.0
+        running_train_loss      = 0.0
+        average_train_loss      = 0.0
+        running_val_loss        = 0.0
+        average_val_loss        = 0.0
 
         for phase in ['train', 'val']:
             if phase == 'train':
@@ -130,12 +140,10 @@ def train(batch_size = 14, epochs = 40):
 
                 for train_data in train_loader:
                     train_batch_since = time.time()
-                    
-                    print('Train: {}'.format(current_train_iter))
                         
                     current_train_iter += 1
 
-                    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images, transformed_images = train_data
+                    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images = train_data
 
                     xs = [images, tl_tags, br_tags]
                     ys = [tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs]                  
@@ -152,7 +160,7 @@ def train(batch_size = 14, epochs = 40):
                     running_train_loss += loss.item()
                     average_train_loss = running_train_loss / current_train_iter
 
-                    writer.add_scalar(tag = 'TrainRunAvgLoss/EPOCH {}'.format(current_epoch + 1), scalar_value = average_train_loss, global_step = current_train_iter)
+                    writer.add_scalar(tag = 'TrainIterAvgLoss/EPOCH {}'.format(current_epoch + 1), scalar_value = average_train_loss, global_step = current_train_iter)
                     
                     loss.backward(retain_graph = False)
             
@@ -171,11 +179,9 @@ def train(batch_size = 14, epochs = 40):
                         
                         val_batch_since = time.time()
                         
-                        print('Valid: {}'.format(current_val_iter))
-                        
                         current_val_iter += 1
                         
-                        images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images, transformed_images = val_data
+                        images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images = val_data
 
                         xs = [images, tl_tags, br_tags]
                         ys = [tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs]                    
@@ -187,7 +193,7 @@ def train(batch_size = 14, epochs = 40):
                         running_val_loss += val_loss.item()
                         average_val_loss = running_val_loss / current_val_iter
 
-                        writer.add_scalar(tag = 'ValRunAvgLoss/EPOCH {}'.format((current_epoch + 1)), scalar_value = average_val_loss, global_step = current_val_iter)
+                        writer.add_scalar(tag = 'ValIterAvgLoss/EPOCH {}'.format((current_epoch + 1)), scalar_value = average_val_loss, global_step = current_val_iter)
                         
                         val_time_elapsed = time.time() - val_batch_since                                      
                     
@@ -210,42 +216,47 @@ def train(batch_size = 14, epochs = 40):
 
                     writer.add_scalar(tag = 'ValEpochAvgLoss', scalar_value = average_val_loss, global_step = (current_epoch + 1))
         
-        if ((current_epoch % 5) == 0):
+        if ((current_epoch % mean_ap_epoch_interval) == 0):
+            mean_ap_iterations = np.random.randint(low = 1, high = len(mAP_loader), size = 4)
 
             model.eval()
 
             with torch.no_grad():
                 for mAP_data in mAP_loader:
                     mAP_batch_since = time.time()
-
-                    if current_mAP_iter % 500 == 0:
-                        print('mAP: {}'.format(current_mAP_iter))
-
+                    
                     current_mAP_iter += 1
 
-                    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images, transformed_images = mAP_data
+                    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images = mAP_data
 
                     detections = model(images, mode = 'mAP', ae_threshold = ae_threshold, top_k = top_k, kernel = nms_kernel)
 
-                    calculate_mAP(detections = detections, names = names, orig_images = orig_images, \
-                        transformed_images = transformed_images, detections_json = detections_json, nms_threshold = nms_threshold)
+                    generate_detections(detections = detections, names = names, orig_images = orig_images, \
+                        detections_json = detections_json, nms_threshold = nms_threshold, min_score = min_score, \
+                        current_iter = current_mAP_iter, mean_ap_iterations = mean_ap_iterations, pred_detections_images = pred_detections_images, \
+                        gt_detections_images = gt_detections_images)
             
-                save_detections(detections_json, current_epoch)    
+                save_detections(detections_json, (current_epoch + 1))
+
+                grid_image = make_grid_image(gt_detections_images = gt_detections_images, pred_detections_images = pred_detections_images)
+
+                mean_ap, breakdown, cat_list = evaluate_detections(current_epoch = (current_epoch + 1), mean_ap_thresholds = mean_ap_thresholds)
+
+                writer.add_scalar(tag = 'MEAN_AP', scalar_value = mean_ap, global_step = (current_epoch + 1))
+                for i in range(len(cat_list)):
+                    writer.add_scalar(tag = ('PRECISIONS/' + cat_list[i].upper()), scalar_value = breakdown[i], global_step = (current_epoch + 1))
+
+                writer.add_images(tag = 'PRECISION/EPOCH_{}'.format(current_epoch + 1), img_tensor = grid_image, global_step = 0, dataformats='CHW')    
 
         epoch_time_elapsed = time.time() - epoch_since
 
-        writer.add_text(tag = 'RunningLogs',                                                                      \
-                        text_string = (   'CURRENT AVERAGE TRAINING LOSS: {}  \n'.format(average_train_loss)      \
-                                        + 'CURRENT AVERAGE VALIDATION LOSS: {}  \n'.format(average_val_loss)      \
-                                        + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)    \
-                                        + 'EPOCH TIME: {}:{}  \n'.format((epoch_time_elapsed // 60 // 60),        \
-                                                                            (epoch_time_elapsed // 60 % 60))),     \
+        writer.add_text(tag = 'RunningLogs',                                                                          \
+                        text_string = (   'CURRENT AVERAGE TRAINING LOSS: {}  \n'.format(average_train_loss)          \
+                                        + 'CURRENT AVERAGE VALIDATION LOSS: {}  \n'.format(average_val_loss)          \
+                                        + 'BEST AVERAGE VALIDATION LOSS: {}  \n'.format(best_average_val_loss)        \
+                                        + 'EPOCH TIME: {}:{}  \n'.format(int(epoch_time_elapsed // 60 // 60),         \
+                                                                            int(epoch_time_elapsed // 60 % 60))),     \
                         global_step = (current_epoch + 1), walltime = None)
 
 if __name__ == "__main__":
     train()
-
-# TODO:
-#       Dataset átnézése, detection-ök átgondolása
-#       test_v2 véglegesítése, az mAP számítás becsatornázása
-#       Tensorboardra kitenni az mAP-t is.
