@@ -108,13 +108,13 @@ class kp(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, *xs, mode, ae_threshold = 0.5, top_k = 100, kernel = 3):
-        if mode == 'Train':
+        if ((mode == 'Train') or (mode == 'Val')):
             image   = xs[0]
             tl_inds = xs[1]
             br_inds = xs[2]
 
             inter = self.pre(image)
-
+            
             outs  = []
 
             layers = zip(
@@ -131,9 +131,10 @@ class kp(nn.Module):
                 tl_tag_, br_tag_                = layer[5:7]
                 tl_regr_, br_regr_              = layer[7:9]
 
-                kp = kp_(inter)        
+                kp = kp_(inter)
+                        
                 cnv = cnv_(kp)
-                
+               
                 tl_cnv, br_cnv = corner_pools_(cnv)
                 
                 tl_heat, br_heat = tl_heat_(tl_cnv), br_heat_(br_cnv) 
@@ -145,8 +146,7 @@ class kp(nn.Module):
                 tl_regr = _tranpose_and_gather_feat(tl_regr, tl_inds)
                 br_regr = _tranpose_and_gather_feat(br_regr, br_inds)
 
-
-                outs += [tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr]
+                outs += [tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr]                
 
                 if ind < self.nstack - 1:
                     inter = self.inters_[ind](inter) + self.cnvs_[ind](cnv)
@@ -176,6 +176,7 @@ class kp(nn.Module):
                 tl_regr_, br_regr_              = layer[7:9]
 
                 kp  = kp_(inter)
+                
                 cnv = cnv_(kp)
 
                 if ind == self.nstack - 1:
@@ -193,5 +194,3 @@ class kp(nn.Module):
                     inter = self.inters[ind](inter)
 
             return _decode(*outs[-6:], ae_threshold = ae_threshold, K = top_k, kernel = kernel)
-
-#Hourglass = Hourglass_module(n = n, dims = dims, modules = modules)
