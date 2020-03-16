@@ -1,283 +1,93 @@
-import glob
+import torch
 import cv2
 import numpy as np
-from skimage import io
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-#from Dataset import Dataset as Dataset_test
-from Hourglass_module import kp_module
-from Corner_pooling import CornerPool_module
-from utils import convolution, residual, make_layer, make_kp_layer, make_layer_revr, make_merge_layer, make_pool_layer, make_unpool_layer,\
-                    make_cnv_layer, make_inter_layer, _tranpose_and_gather_feat, _nms, _topk, _decode
+import json
+import os
+from torchvision.utils import make_grid
+from torch.utils.tensorboard import SummaryWriter
+from pprint import pprint
+from collections import defaultdict
 from NonMaxSuppression.nms import soft_nms, soft_nms_merge
+from CornerNet import kp as cornernet
 
 
-n = 5
-dims    = [256, 256, 384, 384, 384, 512]
-modules = [2, 2, 2, 2, 2, 4]
-out_dim = 10
+train_annotation_path       = "../BDD100K/bdd100k_labels_images_train.json"
+new_train_annotation_path   = "../BDD100K/new_bdd100k_labels_images_train.json"
+val_annotation_path         = "../BDD100K/bdd100k_labels_images_val.json"              # First rename the original "bdd100k_labels_images_val.json" to 
+                                                                                        # "bdd100k_labels_images_test.json"
+map_detection_path          = "../Detections/Hourglass/"
+gt_detection_path           = "../BDD100K/detection_val.json"
 
-# kwargs: 
-top_k = 100
-ae_threshold = 0.5
-nms_threshold = 0.5
-nms_kernel = 3
+train_val_image_root = "../BDD100K/train/"
 
-class Dataset_test(Dataset):
-    def __init__(self):
-        self.device = torch.device('cuda:0')
-        self.test_image_paths = glob.glob('/content/test/*.jpg')
-        self.resize_size = (640, 360)
-        self.npad = ((0, 24), (0, 0), (0, 0))
+reverse_categories_dict = { 0: 'bus',
+                            1: 'traffic light',
+                            2: 'traffic sign',
+                            3: 'person',
+                            4: 'bicycle',
+                            5: 'truck',
+                            6: 'motorcycle',
+                            7: 'car',
+                            8: 'train',
+                            9: 'rider' }
 
-    def __getitem__(self, index):
-        name = self.test_image_paths[index].rsplit('/', 1)[1]
-        print(name)
+orig_size = [720, 1280]
+output_size = [96, 160]
 
-        image = io.imread(self.test_image_paths[index])
-        image = cv2.resize(image, self.resize_size) 
-        image = np.pad(image, pad_width = self.npad, mode = 'constant', constant_values = 0)
-        
-        tensor_image = torch.from_numpy(image / 255.0).float().to(device = self.device).permute(2, 0, 1)
+class MyJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(MyEncoder, self).default(obj)
 
-        return tensor_image, name
-    
-    def __len__(self): 
-      return len(self.test_image_paths)
+def separate_train_annotations():
+    with open(train_annotation_path) as f:
+        annotation_file = json.load(f)
 
-class kp(nn.Module):
-    def __init__(
-        self, n, nstack, dims, modules, out_dim, pre = None, cnv_dim = 256,        
-        make_cnv_layer = make_cnv_layer, make_heat_layer = make_kp_layer,
-        make_tag_layer = make_kp_layer, make_regr_layer = make_kp_layer,
-        make_up_layer = make_layer, make_low_layer = make_layer, 
-        make_hg_layer = make_layer, make_hg_layer_revr = make_layer_revr,
-        make_pool_layer = make_pool_layer, make_unpool_layer = make_unpool_layer,
-        make_merge_layer = make_merge_layer, make_inter_layer = make_inter_layer, 
-        basic_layer = residual
-    ):
-        super(kp, self).__init__()
+    with open(val_annotation_path, 'w') as f:
+        json.dump(annotation_file[60000:], f, ensure_ascii = False, indent = 4)
 
-        self.nstack = nstack
-        curr_dim = dims[0]
+    with open(new_train_annotation_path, 'w') as f:
+        json.dump(annotation_file[0:60000], f, ensure_ascii = False, indent = 4)        # Then rename the new json file to "bdd100k_labels_images_train.json
 
-        self.pre = nn.Sequential(
-                    convolution(7, 3, 128, stride=2),
-                    residual(3, 128, 256, stride=2)
-                )
+def save_detections(detections_json, current_epoch):
+    with open(map_detection_path + "cornernet_hourglass_map_detections_epoch_{}.json".format(current_epoch), 'w') as f:
+        json.dump(detections_json, f, ensure_ascii = False, indent = 4, cls = MyJSONEncoder)
 
-        self.kps = nn.ModuleList([
-                    kp_module(
-                        n, dims, modules, layer = basic_layer,
-                        make_up_layer = make_up_layer,
-                        make_low_layer = make_low_layer,
-                        make_hg_layer = make_hg_layer,
-                        make_hg_layer_revr = make_hg_layer_revr,
-                        make_pool_layer = make_pool_layer,
-                        make_unpool_layer = make_unpool_layer,
-                        make_merge_layer = make_merge_layer
-                    ) for _ in range(nstack)
-                ])
+def generate_detections(detections, names, orig_images, detections_json, nms_threshold, min_score, current_iter, annot_image_saving_iterations, \
+                            pred_detections_images, gt_detections_images):
+    out_width           = 160
+    categories          = 10
+    max_per_image       = 100
+    merge_bbox          = False
+    nms_algorithm       = 2                                # "exp_soft_nms"
+    weight_exp          = 8
 
-        self.cnvs = nn.ModuleList([
-            make_cnv_layer(curr_dim, cnv_dim) for _ in range(nstack)
-        ])
+    width_ratio         = orig_size[1] / output_size[1]                                         
+    height_ratio        = orig_size[0] / output_size[0]
 
-        '''
-        self.tl_cnvs = nn.ModuleList([
-            make_tl_layer(cnv_dim) for _ in range(nstack)
-        ])
-        self.br_cnvs = nn.ModuleList([
-            make_br_layer(cnv_dim) for _ in range(nstack)
-        ])
-        '''
-
-        self.corner_pools = nn.ModuleList([
-            CornerPool_module() for _ in range(nstack)
-        ])
-
-        ## keypoint heatmaps
-        self.tl_heats = nn.ModuleList([
-            make_heat_layer(cnv_dim, curr_dim, out_dim) for _ in range(nstack)
-        ])
-        self.br_heats = nn.ModuleList([
-            make_heat_layer(cnv_dim, curr_dim, out_dim) for _ in range(nstack)
-        ])
-
-        ## tags
-        self.tl_tags  = nn.ModuleList([
-            make_tag_layer(cnv_dim, curr_dim, 1) for _ in range(nstack)
-        ])
-        self.br_tags  = nn.ModuleList([
-            make_tag_layer(cnv_dim, curr_dim, 1) for _ in range(nstack)
-        ])
-
-        for tl_heat, br_heat in zip(self.tl_heats, self.br_heats):
-            tl_heat[-1].bias.data.fill_(-2.19)
-            br_heat[-1].bias.data.fill_(-2.19)
-
-        self.inters = nn.ModuleList([
-            make_inter_layer(curr_dim) for _ in range(nstack - 1)
-        ])
-
-        self.inters_ = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(curr_dim, curr_dim, (1, 1), bias=False),
-                nn.BatchNorm2d(curr_dim)
-            ) for _ in range(nstack - 1)
-        ])
-        self.cnvs_ = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(cnv_dim, curr_dim, (1, 1), bias=False),
-                nn.BatchNorm2d(curr_dim)
-            ) for _ in range(nstack - 1)
-        ])
-
-        self.tl_regrs = nn.ModuleList([
-            make_regr_layer(cnv_dim, curr_dim, 2) for _ in range(nstack)
-        ])
-        self.br_regrs = nn.ModuleList([
-            make_regr_layer(cnv_dim, curr_dim, 2) for _ in range(nstack)
-        ])
-
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, *xs, ae_threshold, K, kernel):       
-        image = xs[0]
-
-        inter = self.pre(image)
-        outs  = []
-
-        layers = zip(
-            self.kps, self.cnvs,
-            self.corner_pools,
-            self.tl_heats, self.br_heats,
-            self.tl_tags, self.br_tags,
-            self.tl_regrs, self.br_regrs
-        )
-        for ind, layer in enumerate(layers):
-            kp_, cnv_                       = layer[0:2]
-            corner_pools_                   = layer[2]
-            tl_heat_, br_heat_              = layer[3:5]
-            tl_tag_, br_tag_                = layer[5:7]
-            tl_regr_, br_regr_              = layer[7:9]
-
-            kp  = kp_(inter)
-            cnv = cnv_(kp)
-
-            if ind == self.nstack - 1:
-                tl_cnv, br_cnv = corner_pools_(cnv)
-
-                tl_heat, br_heat = tl_heat_(tl_cnv), br_heat_(br_cnv)
-                tl_tag,  br_tag  = tl_tag_(tl_cnv),  br_tag_(br_cnv)
-                tl_regr, br_regr = tl_regr_(tl_cnv), br_regr_(br_cnv)
-
-                outs += [tl_heat, br_heat, tl_tag, br_tag, tl_regr, br_regr]
-
-            if ind < self.nstack - 1:
-                inter = self.inters_[ind](inter) + self.cnvs_[ind](cnv)
-                inter = self.relu(inter)
-                inter = self.inters[ind](inter)
-
-        return _decode(*outs[-6:], ae_threshold = ae_threshold, K = K, kernel = kernel)
-
-def test(batch_size = 1):
-    
-    
-    test_dataset = Dataset_test()
-    test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
-    test_loader_iter = iter(test_loader)
-    
-   
-    #CHECKPOINT_PATH = '/content/drive/My Drive/CornerNet/ModelParams/NEW_train_valid_pretrained_cornernet-epoch{}.pth'.format(9)
-    CHECKPOINT_PATH = '../ModelParams/Hourglass/train_valid_pretrained_cornernet-epoch{}-iter{}.pth'.format(3, 5067)
-    checkpoint = torch.load(CHECKPOINT_PATH)
-    best_average_val_loss = checkpoint['val_loss']
-    
-    '''
-    val_dataset = Dataset_haha(mode = 'Val')
-    val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
-    val_loader_iter = iter(val_loader)
-    images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names = next(val_loader_iter)
-    print('TL_TAGS_SHAPE: {}\nTL_HEATMAPS_SHAPE: {}\nTL_REGRS_SHAPE: {}'.format(tl_tags.shape, tl_heatmaps.shape, tl_regrs.shape))
-    outs = [tl_heatmaps, br_heatmaps, tl_tags, br_tags, tl_regrs, br_regrs]
-    detections = _decode(*outs[-6:], ae_threshold = ae_threshold, K = 160, kernel = nms_kernel)
-    '''
-
-    
-    model = kp(n = n, nstack = 2, dims = dims, modules = modules, out_dim = out_dim).cuda()
-
-    model.load_state_dict(checkpoint['model_state_dict'])
-
-    model.eval()
-
-    images, names = next(test_loader_iter)
-    print(images.shape)
-
-    detections = model(images, ae_threshold = ae_threshold, K = top_k, kernel = nms_kernel)
-    
-    
-
-    #print('Detections_size: {}\nDetections: {}'.format(detections.shape, detections))
-    print('Detections_size: {}'.format(detections.shape))
-
-    '''
-    z = (torch.randn(2, 3)*1000).int()
-
-    z_view_2 = z.view(2, 3, 1)
-    z_view_2_expand = z_view_2.expand(2, 3, 3)
-
-    z_view_1 = z.view(2, 1, 3)
-    z_view_1_expand = z_view_1.expand(2, 3, 3)
-
-    print('Z: {}\nZ_VIEW_2: {}\nZ_VIEW_2_EXPAND: {}\nZ_VIEW_1: {}\nZ_VIEW_1_EXPAND: {}'.format(z, z_view_2, z_view_2_expand, z_view_1, z_view_1_expand))
-
-
-    #tl_xs = tl_xs.view(batch, K, 1).expand(batch, K, K)
-    #br_ys = br_ys.view(batch, 1, K).expand(batch, K, K)
-    '''
     detections = detections.data.cpu().numpy()
-    #print('NUMPY DETECTIONS_SHAPE: {}\nNUMPY_DETECTIONS: {}'.format(detections.shape, detections))
 
-    out_width = 160
-    dets = detections.reshape(2, -1, 8)
-    #print('DETS_FIRST_RESHAPE_SHAPE: {}\nDETS_FIRTS_RESHAPE: {}'.format(dets.shape, dets))
-    #print('DETS_BEFORE_SUB_FROM_WIDTH_SHAPE: {}\nDETS_BEFORE_SUB_FROM_WIDTH: {}'.format(dets[1, :, [0, 2]].shape, dets[1, :, [0, 2]]))
-    dets[1, :, [0, 2]] = out_width - dets[1, :, [2, 0]]
-    #print('DETS_AFTER_SUB_FROM_WIDTH_SHAPE: {}\nDETS_AFTER_SUB_FROM_WIDTH: {}'.format(dets[1, :, [0, 2]].shape, dets[1, :, [0, 2]]))
-    detections = dets.reshape(1, -1, 8)
-    #print('DETS_SECOND_RESHAPE_SHAPE: {}\nDETS_SECOND_RESHAPE: {}'.format(detections.shape, detections))
-
-    classes    = detections[..., -1]
-    #print(classes.shape, classes)
-    classes    = classes[0]
-    #print(classes.shape, classes)
-    detections = detections[0]
-    #print(detections.shape, detections)
-
-    # reject detections with negative scores
-    keep_inds  = (detections[:, 4] > -1)
-    #print(keep_inds.shape, keep_inds)
-    detections = detections[keep_inds]
-    #print(detections.shape, detections)
-    classes    = classes[keep_inds]
-    #print(classes.shape, classes)
-
-    categories = 10
-    max_per_image = 100
-
-    merge_bbox = False
-    nms_algorithm   = 2 #"exp_soft_nms"
-    weight_exp      = 8
-
+    dets                = detections.reshape(2, -1, 8)
+    dets[1, :, [0, 2]]  = out_width - dets[1, :, [2, 0]]
+    detections          = dets.reshape(1, -1, 8)
+    classes             = detections[..., -1]
+    classes             = classes[0]
+    detections          = detections[0]
+    keep_inds           = (detections[:, 4] > -1)
+    detections          = detections[keep_inds]
+    classes             = classes[keep_inds]
 
     top_bboxes = {}
-    for j in range(1, categories):
-            keep_inds = (classes == j)
-            #print('KEEP_INDS: {}'.format(keep_inds))
-            
+    for j in range(0, categories):                                                          
+            keep_inds = (classes == j)            
             top_bboxes[j] = detections[keep_inds][:, 0:7].astype(np.float32)
+
             if merge_bbox:
                 soft_nms_merge(top_bboxes[j], Nt=nms_threshold, method=nms_algorithm, weight_exp=weight_exp)
             else:
@@ -286,35 +96,23 @@ def test(batch_size = 1):
    
     scores = np.hstack([
         top_bboxes[j][:, -1] 
-        for j in range(1, categories)
-    ])
+        for j in range(1, categories)])
+        
     if len(scores) > max_per_image:
         kth    = len(scores) - max_per_image
         thresh = np.partition(scores, kth)[kth]
-        #print("THRESHOLD: {}".format(thresh))
         for j in range(1, categories):
             keep_inds = (top_bboxes[j][:, -1] >= thresh)
             top_bboxes[j] = top_bboxes[j][keep_inds]
-
-    print('TOP_BBOXES_LEN: {}\nTOP_BBOXES: {}'.format(len(top_bboxes), top_bboxes))
-   # print('BUS_BBOXES_LEN: {}'.format(len(top_bboxes[0])))
-    print('TRAFFIC_LIGHT_BBOXES_LEN: {}'.format(len(top_bboxes[1])))
-    print('TRAFFIC_SIGN_BBOXES_LEN: {}'.format(len(top_bboxes[2])))
-    print('PERSON_BBOXES_LEN: {}'.format(len(top_bboxes[3])))
-    print('BICYCLE_BBOXES_LEN: {}'.format(len(top_bboxes[4])))
-    print('TRUCK_BBOXES_LEN: {}'.format(len(top_bboxes[5])))
-    print('MOTORCYCLE_BBOXES_LEN: {}'.format(len(top_bboxes[6])))
-    print('CAR_BBOXES_LEN: {}'.format(len(top_bboxes[7])))
-    print('TRAIN_BBOXES_LEN: {}'.format(len(top_bboxes[8])))
-    print('RIDER_BBOXES_LEN: {}'.format(len(top_bboxes[9])))
-
-
-    for j in range(1, categories):
-        keep_inds = (top_bboxes[j][:, -1] > 0.4)    # > X -et átirni, ha kisebb biztonsággal prediktált bboxokat is akarunk!
+    
+    # Keep only (score > min_score) bboxes
+    for j in range(0, categories):
+        keep_inds = (top_bboxes[j][:, -1] > min_score)    
         top_bboxes[j] = top_bboxes[j][keep_inds]
 
+    '''
     print('TOP_BBOXES_LEN: {}\nTOP_BBOXES: {}'.format(len(top_bboxes), top_bboxes))
-   # print('BUS_BBOXES_LEN: {}'.format(len(top_bboxes[0])))
+    print('BUS_BBOXES_LEN: {}'.format(len(top_bboxes[0])))
     print('TRAFFIC_LIGHT_BBOXES_LEN: {}'.format(len(top_bboxes[1])))
     print('TRAFFIC_SIGN_BBOXES_LEN: {}'.format(len(top_bboxes[2])))
     print('PERSON_BBOXES_LEN: {}'.format(len(top_bboxes[3])))
@@ -324,66 +122,262 @@ def test(batch_size = 1):
     print('CAR_BBOXES_LEN: {}'.format(len(top_bboxes[7])))
     print('TRAIN_BBOXES_LEN: {}'.format(len(top_bboxes[8])))
     print('RIDER_BBOXES_LEN: {}'.format(len(top_bboxes[9])))
+    '''    
 
-    debug = True
-    current_image_paths = '/content/test/' + names[0]
-    print(current_image_paths)
+    # Save the detected bounding boxes into detections_json
+    for j in range(0, categories):
+        for bbox in top_bboxes[j]:
+            bbox[0:4:2] = bbox[0:4:2] * width_ratio             # Transform bbox coordinates to the original image size (96x160 --> 720x1280)
+            bbox[1:4:2] = bbox[1:4:2] * height_ratio
+            detections_json.append(
+                {
+                    "name": names[0],
+                    "timestamp": 10000,
+                    "category": reverse_categories_dict[j],
+                    "bbox": bbox[0:4],
+                    "score": 1
+                }
+            )   
 
-    categories_dict = { 0: 'bus',
-                    1: 'traffic light',
-                    2: 'traffic sign',
-                    3: 'person',
-                    4: 'bicycle',
-                    5: 'truck',
-                    6: 'motorcycle',
-                    7: 'car',
-                    8: 'train',
-                    9: 'rider' }
+    # Create and save annotated image from predictions along with the corresponding gt annotated image
+    if current_iter in (annot_image_saving_iterations[0], annot_image_saving_iterations[1], annot_image_saving_iterations[2], annot_image_saving_iterations[3]):
+        pred_image = generate_annotated_image(detections = top_bboxes, mode = 'PRED', image = None, image_name = names[0])
+        pred_detections_images.append(torch.from_numpy(pred_image / 255.0).float().unsqueeze(dim = 0).permute(0,3,1,2))
+
+        gt_detections_images.append((orig_images/255.0).permute(0,3,1,2))
+
+def generate_annotated_image(detections, mode, image = None, image_name = None):
+    num_categories = 10
     
-    if debug:
-        #image_file = db.image_file(db_ind)
-        image      = cv2.imread(current_image_paths)
-        image_name = current_image_paths.rsplit('/', 1)[1]
-        print(image)
-        print(image_name)
+    if mode == 'GT':
+        top_bboxes = []
+        for i in range(num_categories):
+            cat_bboxes = []
+            for j, det in enumerate(detections):
+                if (det[0] == i):
+                    cat_bboxes.append(det[1:])
+            
+            cat_bboxes = np.array(cat_bboxes)
+            top_bboxes.append(cat_bboxes)
 
-        bboxes = {}
-        for j in range(1, categories):
-            #keep_inds = (top_bboxes[j][:, -1])
-            cat_name  = categories_dict[j]
-            cat_size  = cv2.getTextSize(cat_name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-            color     = np.random.random((3, )) * 0.6 + 0.4
-            color     = color * 255
-            color     = color.astype(np.int32).tolist()
-            for bbox in top_bboxes[j]:
-                bbox  = ((bbox[0:4])*8).astype(np.int32) #*8 nem is kell?
-                if bbox[1] - cat_size[1] - 2 < 0:
-                    cv2.rectangle(image,
-                        (bbox[0], bbox[1] + 2),
-                        (bbox[0] + cat_size[0], bbox[1] + cat_size[1] + 2),
-                        color, -1
-                    )
-                    cv2.putText(image, cat_name, 
-                        (bbox[0], bbox[1] + cat_size[1] + 2), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness=1
-                    )
-                else:
-                    cv2.rectangle(image,
-                        (bbox[0], bbox[1] - cat_size[1] - 2),
-                        (bbox[0] + cat_size[0], bbox[1] - 2),
-                        color, -1
-                    )
-                    cv2.putText(image, cat_name, 
-                        (bbox[0], bbox[1] - 2), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness=1
-                    )
-                cv2.rectangle(image,
-                    (bbox[0], bbox[1]),
-                    (bbox[2], bbox[3]),
-                    color, 2
+        annot_image = image
+
+    elif mode == 'PRED':
+        current_image_paths = train_val_image_root + image_name
+        annot_image         = cv2.imread(current_image_paths)
+        annot_image         = cv2.cvtColor(annot_image, cv2.COLOR_BGR2RGB)
+        top_bboxes          = detections
+
+    for i in range(0, num_categories):
+        #keep_inds = (top_bboxes[j][:, -1])
+        cat_name  = reverse_categories_dict[i]
+        cat_size  = cv2.getTextSize(cat_name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+        color     = np.random.random((3, )) * 0.6 + 0.4
+        color     = color * 255
+        color     = color.astype(np.int32).tolist()
+        for bbox in top_bboxes[i]:
+            bbox  = (bbox[0:4]).astype(np.int32)
+            bbox[0:4:2] = np.clip(bbox[0:4:2], 1, (orig_size[1] - 1))                   # This way the bboxes looks nicer on the edges
+            bbox[1:4:2] = np.clip(bbox[1:4:2], 1, (orig_size[0] - 1))
+            if bbox[1] - cat_size[1] - 2 < 0:
+                cv2.rectangle(annot_image,
+                    (bbox[0], bbox[1] + 2),
+                    (bbox[0] + cat_size[0], bbox[1] + cat_size[1] + 2),
+                    color, -1
                 )
-        cv2.imwrite(('/content/' + image_name), image)
+                cv2.putText(annot_image, cat_name, 
+                    (bbox[0], bbox[1] + cat_size[1] + 2), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness = 1
+                )
+            else:
+                cv2.rectangle(annot_image,
+                    (bbox[0], bbox[1] - cat_size[1] - 2),
+                    (bbox[0] + cat_size[0], bbox[1] - 2),
+                    color, -1
+                )
+                cv2.putText(annot_image, cat_name, 
+                    (bbox[0], bbox[1] - 2), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), thickness = 1
+                )
+            cv2.rectangle(annot_image,
+                (bbox[0], bbox[1]),
+                (bbox[2], bbox[3]),
+                color, 2
+            )
+    return annot_image
+
+def make_grid_image(gt_detections_images, pred_detections_images):
+    concat_gt_image     = torch.cat((gt_detections_images[0], gt_detections_images[1], gt_detections_images[2], gt_detections_images[3]), 0)
+    concat_pred_image   = torch.cat((pred_detections_images[0], pred_detections_images[1], pred_detections_images[2], pred_detections_images[3]), 0)
     
+    concat_image        = torch.cat((concat_pred_image, concat_gt_image), 0)
+  
+    grid_image = make_grid(tensor = concat_image, nrow = 4, padding = 10, pad_value = 55.0)
+
+    return grid_image
+
+def get_ap(recalls, precisions):
+    # correct AP calculation
+    # first append sentinel values at the end
+    recalls = np.concatenate(([0.], recalls, [1.]))
+    precisions = np.concatenate(([0.], precisions, [0.]))
+
+    # compute the precision envelope
+    for i in range(precisions.size - 1, 0, -1):
+        precisions[i - 1] = np.maximum(precisions[i - 1], precisions[i])
+
+    # to calculate area under PR curve, look for points
+    # where X axis (recall) changes value
+    i = np.where(recalls[1:] != recalls[:-1])[0]
+
+    # and sum (\Delta recall) * prec
+    ap = np.sum((recalls[i + 1] - recalls[i]) * precisions[i + 1])
+    return ap
+
+
+def group_by_key(detections, key):
+    groups = defaultdict(list)
+    for d in detections:
+        groups[d[key]].append(d)
+    return groups
+
+
+def cat_pc(gt, predictions, thresholds):
+    """
+    Implementation refers to https://github.com/rbgirshick/py-faster-rcnn
+    """
+    num_gts = len(gt)
+    image_gts = group_by_key(gt, 'name')
+    image_gt_boxes = {k: np.array([[float(z) for z in b['bbox']]
+                                   for b in boxes])
+                      for k, boxes in image_gts.items()}
+    image_gt_checked = {k: np.zeros((len(boxes), len(thresholds)))
+                        for k, boxes in image_gts.items()}
+    predictions = sorted(predictions, key=lambda x: x['score'], reverse=True)
+
+    # go down dets and mark TPs and FPs
+    nd = len(predictions)
+    tp = np.zeros((nd, len(thresholds)))
+    fp = np.zeros((nd, len(thresholds)))
+    for i, p in enumerate(predictions):
+        box = p['bbox']
+        ovmax = -np.inf
+        jmax = -1
+        try:
+            gt_boxes = image_gt_boxes[p['name']]
+            gt_checked = image_gt_checked[p['name']]
+        except KeyError:
+            gt_boxes = []
+            gt_checked = None
+
+        if len(gt_boxes) > 0:
+            # compute overlaps
+            # intersection
+            ixmin = np.maximum(gt_boxes[:, 0], box[0])
+            iymin = np.maximum(gt_boxes[:, 1], box[1])
+            ixmax = np.minimum(gt_boxes[:, 2], box[2])
+            iymax = np.minimum(gt_boxes[:, 3], box[3])
+            iw = np.maximum(ixmax - ixmin + 1., 0.)
+            ih = np.maximum(iymax - iymin + 1., 0.)
+            inters = iw * ih
+
+            # union
+            uni = ((box[2] - box[0] + 1.) * (box[3] - box[1] + 1.) +
+                   (gt_boxes[:, 2] - gt_boxes[:, 0] + 1.) *
+                   (gt_boxes[:, 3] - gt_boxes[:, 1] + 1.) - inters)
+
+            overlaps = inters / uni
+            ovmax = np.max(overlaps)
+            jmax = np.argmax(overlaps)
+
+        for t, threshold in enumerate(thresholds):
+            if ovmax > threshold:
+                if gt_checked[jmax, t] == 0:
+                    tp[i, t] = 1.
+                    gt_checked[jmax, t] = 1
+                else:
+                    fp[i, t] = 1.
+            else:
+                fp[i, t] = 1.
+
+    # compute precision recall
+    fp = np.cumsum(fp, axis=0)
+    tp = np.cumsum(tp, axis=0)
+    recalls = tp / float(num_gts)
+    # avoid divide by zero in case the first detection matches a difficult
+    # ground truth
+    precisions = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
+    ap = np.zeros(len(thresholds))
+    for t in range(len(thresholds)):
+        ap[t] = get_ap(recalls[:, t], precisions[:, t])
+
+    return recalls, precisions, ap
+
+
+def evaluate_detections(current_epoch, mean_ap_thresholds):
+    result_path = map_detection_path + "cornernet_hourglass_map_detections_epoch_{}.json".format(current_epoch)
+    thresholds = mean_ap_thresholds
+
+    gt = json.load(open(gt_detection_path, 'r'))
+    pred = json.load(open(result_path, 'r'))
+    cat_gt = group_by_key(gt, 'category')
+    cat_pred = group_by_key(pred, 'category')
+    cat_list = sorted(cat_gt.keys())
+    
+    aps = np.zeros((len(thresholds), len(cat_list)))
+    for i, cat in enumerate(cat_list):
+        if cat in cat_pred:
+            r, p, ap = cat_pc(cat_gt[cat], cat_pred[cat], thresholds)
+            aps[:, i] = ap
+    aps *= 100
+   
+    m_ap_0 = np.mean(aps[0, :])
+    m_ap_1 = np.mean(aps[1, :])
+    
+    mean_ap_0, mean_ap_1, breakdown_0, breakdown_1 = m_ap_0, m_ap_1, aps[0, :].flatten().tolist(), aps[1, :].flatten().tolist()
+
+    #print('{:.2f}'.format(mean_ap),
+    #      ', '.join(['{:.2f}'.format(n) for n in breakdown]))
+    
+    return mean_ap_0, mean_ap_1, breakdown_0, breakdown_1, cat_list
+
+def create_graph():
+    '''
+    To use this function, first some modifications are required in (CornerNet.py / kp).
+    1.) Modify the forward function's inputs as below:
+            def forward(self, image, tl_tags, br_tags, mode = 'Train', ae_threshold = 0.5, top_k = 100, kernel = 3):
+            if ((mode == 'Train') or (mode == 'Val')):
+                image   = image
+                tl_inds = tl_tags
+                br_inds = br_tags
+    2.) Modify the forward function's return statement as below:
+            return outs[0], outs[1], outs[2], outs[3], outs[4], outs[5]
+    '''
+    
+    writer = SummaryWriter('logs/cornernet_hourglass_graph/') 
+
+    # Model Hyperparameters
+    n = 5
+    nstack = 2
+    dims    = [256, 256, 384, 384, 384, 512]
+    modules = [2, 2, 2, 2, 2, 4]
+    out_dim = 10
+
+    model = cornernet(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
+
+    # Creating default inputs 
+    image       = torch.zeros(1, 3, 384, 640).float().cuda()
+    tl_tags     = torch.from_numpy(np.zeros((1, 160), dtype = np.int64)).cuda()
+    br_tags     = torch.from_numpy(np.zeros((1, 160), dtype = np.int64)).cuda()
+
+    writer.add_graph(model, input_to_model=(image, tl_tags, br_tags), verbose = True)
+    writer.close()
+    
+    # Some errors occur here because of inplace operations in Corner_pooling.py
+    torch.onnx.export(model = model, args = (image, tl_tags, br_tags), f = "cornernet.onnx", verbose = False, opset_version = 11, export_params = True, 
+        input_names = ['image', 'tl_tags', 'br_tags'], output_names = ['tl_heat', 'br_heat', 'tl_tag', 'br_tag', 'tl_regr', 'br_regr'])
+
 
 if __name__ == "__main__":
-    test()
+    create_graph()
+    
