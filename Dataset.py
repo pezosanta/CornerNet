@@ -13,7 +13,7 @@ import torchvision.transforms as Transforms
 from torchvision.utils import make_grid
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from test_v2 import generate_annotated_image
+from test import generate_annotated_image
 import math
 from CornerNet import kp
 import cv2
