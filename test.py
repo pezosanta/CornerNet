@@ -2,23 +2,21 @@ import torch
 import cv2
 import numpy as np
 import json
-import os
 from torchvision.utils import make_grid
 from torch.utils.tensorboard import SummaryWriter
-from pprint import pprint
 from collections import defaultdict
 from NonMaxSuppression.nms import soft_nms, soft_nms_merge
-from CornerNet import kp as cornernet
+from cornernet import CornerNet as cornernet
 
 
-train_annotation_path       = "../BDD100K/bdd100k_labels_images_train.json"
-new_train_annotation_path   = "../BDD100K/new_bdd100k_labels_images_train.json"
-val_annotation_path         = "../BDD100K/bdd100k_labels_images_val.json"              # First rename the original "bdd100k_labels_images_val.json" to 
-                                                                                        # "bdd100k_labels_images_test.json"
-map_detection_path          = "../Detections/Hourglass/"
-gt_detection_path           = "../BDD100K/detection_val.json"
+train_annotation_path       = "../CornerNet/BDD100K/bdd100k_labels_images_train.json"
+new_train_annotation_path   = "../CornerNet/BDD100K/new_bdd100k_labels_images_train.json"
+val_annotation_path         = "../CornerNet/BDD100K/bdd100k_labels_images_val.json"             # First rename the original "bdd100k_labels_images_val.json" to 
+                                                                                                # "bdd100k_labels_images_test.json"
+map_detection_path          = "Detections/MobileNetV3/"
+gt_detection_path           = "../CornerNet/BDD100K/detection_val.json"
 
-train_val_image_root = "../BDD100K/train/"
+train_val_image_root = "../CornerNet/BDD100K/train/"
 
 reverse_categories_dict = { 0: 'bus',
                             1: 'traffic light',
@@ -32,7 +30,7 @@ reverse_categories_dict = { 0: 'bus',
                             9: 'rider' }
 
 orig_size = [720, 1280]
-output_size = [96, 160]
+output_size = [90, 160]
 
 class MyJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -56,7 +54,7 @@ def separate_train_annotations():
         json.dump(annotation_file[0:60000], f, ensure_ascii = False, indent = 4)        # Then rename the new json file to "bdd100k_labels_images_train.json
 
 def save_detections(detections_json, current_epoch):
-    with open(map_detection_path + "cornernet_hourglass_map_detections_epoch_{}.json".format(current_epoch), 'w') as f:
+    with open(map_detection_path + "cornernet_mobilenetv3_map_detections_epoch_{}.json".format(current_epoch), 'w') as f:
         json.dump(detections_json, f, ensure_ascii = False, indent = 4, cls = MyJSONEncoder)
 
 def generate_detections(detections, names, orig_images, detections_json, nms_threshold, min_score, current_iter, annot_image_saving_iterations, \
@@ -89,9 +87,9 @@ def generate_detections(detections, names, orig_images, detections_json, nms_thr
             top_bboxes[j] = detections[keep_inds][:, 0:7].astype(np.float32)
 
             if merge_bbox:
-                soft_nms_merge(top_bboxes[j], Nt=nms_threshold, method=nms_algorithm, weight_exp=weight_exp)
+                soft_nms_merge(top_bboxes[j], Nt = nms_threshold, method = nms_algorithm, weight_exp = weight_exp)
             else:
-                soft_nms(top_bboxes[j], Nt=nms_threshold, method=nms_algorithm)
+                soft_nms(top_bboxes[j], Nt = nms_threshold, method = nms_algorithm)
             top_bboxes[j] = top_bboxes[j][:, 0:5]
    
     scores = np.hstack([
@@ -127,7 +125,7 @@ def generate_detections(detections, names, orig_images, detections_json, nms_thr
     # Save the detected bounding boxes into detections_json
     for j in range(0, categories):
         for bbox in top_bboxes[j]:
-            bbox[0:4:2] = bbox[0:4:2] * width_ratio             # Transform bbox coordinates to the original image size (96x160 --> 720x1280)
+            bbox[0:4:2] = bbox[0:4:2] * width_ratio             # Transform bbox coordinates to the original image size (90x160 --> 720x1280)
             bbox[1:4:2] = bbox[1:4:2] * height_ratio
             detections_json.append(
                 {
@@ -313,13 +311,13 @@ def cat_pc(gt, predictions, thresholds):
 
     return recalls, precisions, ap
 
-
 def evaluate_detections(current_epoch, mean_ap_thresholds):
-    result_path = map_detection_path + "cornernet_hourglass_map_detections_epoch_{}.json".format(current_epoch)
+    result_path = map_detection_path + "cornernet_mobilenetv3_map_detections_epoch_{}.json".format(current_epoch)
     thresholds = mean_ap_thresholds
 
     gt = json.load(open(gt_detection_path, 'r'))
     pred = json.load(open(result_path, 'r'))
+    
     cat_gt = group_by_key(gt, 'category')
     cat_pred = group_by_key(pred, 'category')
     cat_list = sorted(cat_gt.keys())
@@ -346,15 +344,15 @@ def create_graph():
     To use this function, first some modifications are required in (CornerNet.py / kp).
     1.) Modify the forward function's inputs as below:
             def forward(self, image, tl_tags, br_tags, mode = 'Train', ae_threshold = 0.5, top_k = 100, kernel = 3):
-            if ((mode == 'Train') or (mode == 'Val')):
-                image   = image
-                tl_inds = tl_tags
-                br_inds = br_tags
+                if ((mode == 'Train') or (mode == 'Val')):
+                    image   = image
+                    tl_inds = tl_tags
+                    br_inds = br_tags
     2.) Modify the forward function's return statement as below:
             return outs[0], outs[1], outs[2], outs[3], outs[4], outs[5]
     '''
     
-    writer = SummaryWriter('logs/cornernet_hourglass_graph/') 
+    writer = SummaryWriter('../CornerNet/Tensorboard/cornernet_hourglass_graph/') 
 
     # Model Hyperparameters
     n = 5
@@ -380,4 +378,3 @@ def create_graph():
 
 if __name__ == "__main__":
     create_graph()
-    

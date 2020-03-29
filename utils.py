@@ -17,22 +17,6 @@ class convolution(nn.Module):
         relu = self.relu(bn)
         return relu
 
-class fully_connected(nn.Module):
-    def __init__(self, inp_dim, out_dim, with_bn=True):
-        super(fully_connected, self).__init__()
-        self.with_bn = with_bn
-
-        self.linear = nn.Linear(inp_dim, out_dim)
-        if self.with_bn:
-            self.bn = nn.BatchNorm1d(out_dim)
-        self.relu   = nn.ReLU(inplace = True)
-
-    def forward(self, x):
-        linear = self.linear(x)
-        bn     = self.bn(linear) if self.with_bn else linear
-        relu   = self.relu(bn)
-        return relu
-
 class residual(nn.Module):
     def __init__(self, k, inp_dim, out_dim, stride = 1, with_bn = True):
         super(residual, self).__init__()
@@ -61,40 +45,11 @@ class residual(nn.Module):
         skip  = self.skip(x)
         return self.relu(bn2 + skip)
 
-class MergeUp(nn.Module):
-    def forward(self, up1, up2):
-        return up1 + up2
-
-def make_layer(k, inp_dim, out_dim, modules, layer = convolution, **kwargs):
-    layers = [layer(k, inp_dim, out_dim, **kwargs)]
-    for _ in range(1, modules):
-        layers.append(layer(k, out_dim, out_dim, **kwargs))
-    return nn.Sequential(*layers)
-
-def make_layer_revr(k, inp_dim, out_dim, modules, layer = convolution, **kwargs):
-    layers = []
-    for _ in range(modules - 1):
-        layers.append(layer(k, inp_dim, inp_dim, **kwargs))
-    layers.append(layer(k, inp_dim, out_dim, **kwargs))
-    return nn.Sequential(*layers)
-
-def make_pool_layer(dim):
-    return nn.MaxPool2d(kernel_size = 2, stride = 2)
-
-def make_unpool_layer(dim):
-    return nn.Upsample(scale_factor = 2)
-
-def make_merge_layer(dim):
-    return MergeUp()
-
 def make_kp_layer(cnv_dim, curr_dim, out_dim):
     return nn.Sequential(
         convolution(3, cnv_dim, curr_dim, with_bn = False),
         nn.Conv2d(curr_dim, out_dim, (1, 1))
     )
-
-def make_cnv_layer(inp_dim, out_dim):
-    return convolution(3, inp_dim, out_dim)
 
 def make_inter_layer(dim):
     return residual(3, dim, dim)
@@ -226,4 +181,3 @@ def _decode(
     detections = torch.cat([bboxes, scores, tl_scores, br_scores, clses], dim = 2)
 
     return detections
-
