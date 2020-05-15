@@ -2,23 +2,21 @@ import torch
 import cv2
 import numpy as np
 import json
-import os
 from torchvision.utils import make_grid
 from torch.utils.tensorboard import SummaryWriter
-from pprint import pprint
 from collections import defaultdict
 from NonMaxSuppression.nms import soft_nms, soft_nms_merge
-from CornerNet import kp as cornernet
+from cornernet import kp as cornernet
 
 
 train_annotation_path       = "../BDD100K/bdd100k_labels_images_train.json"
 new_train_annotation_path   = "../BDD100K/new_bdd100k_labels_images_train.json"
 val_annotation_path         = "../BDD100K/bdd100k_labels_images_val.json"              # First rename the original "bdd100k_labels_images_val.json" to 
                                                                                         # "bdd100k_labels_images_test.json"
-map_detection_path          = "../Detections/Hourglass/"
-gt_detection_path           = "../BDD100K/detection_val.json"
+map_detection_path          = "../Detections/hourglass/"
+gt_detection_path           = "../../../logs/cornernet/BDD100K/detection_val.json"
 
-train_val_image_root = "../BDD100K/train/"
+train_val_image_root        = "../../../logs/cornernet/BDD100K/train/"
 
 reverse_categories_dict = { 0: 'bus',
                             1: 'traffic light',
@@ -210,7 +208,7 @@ def make_grid_image(gt_detections_images, pred_detections_images):
     concat_gt_image     = torch.cat((gt_detections_images[0], gt_detections_images[1], gt_detections_images[2], gt_detections_images[3]), 0)
     concat_pred_image   = torch.cat((pred_detections_images[0], pred_detections_images[1], pred_detections_images[2], pred_detections_images[3]), 0)
     
-    concat_image        = torch.cat((concat_pred_image, concat_gt_image), 0)
+    concat_image        = torch.cat((concat_pred_image, concat_gt_image.cpu()), 0)
   
     grid_image = make_grid(tensor = concat_image, nrow = 4, padding = 10, pad_value = 55.0)
 
@@ -380,4 +378,3 @@ def create_graph():
 
 if __name__ == "__main__":
     create_graph()
-    

@@ -10,9 +10,9 @@ echo "Downloading BDD100K dataset"
 mkdir BDD100K
 cd BDD100K
 
-gdown https://drive.google.com/uc?id=1MymWKQUFCENauQP8A6QRk1EglinAKaud     # train
-gdown https://drive.google.com/uc?id=1zgutvylvwv4CFz7rzlPFsL5mrTFHuqFG     # val
-gdown https://drive.google.com/uc?id=1JS2jhgdEH8OwCOCQl-BqrYFuI0L2noaO     # test
+gdown https://drive.google.com/uc?id=1qNQlsitLh04VYiNIF-E-nxfGXbzBxfPR     # train
+gdown https://drive.google.com/uc?id=1LGtbO9pqHNFjSFFBlfQjdLNkfFVyjjg7     # val
+gdown https://drive.google.com/uc?id=1o0zHZn6QCthqAoLo1DEIxd1yHKt4oQQp     # test
 
 echo "Unzipping Train, Val, Test datasets"
 unzip -qq train.zip
@@ -24,8 +24,8 @@ rm -r val.zip
 rm -r test.zip
 
 echo "Downloading Train, Val annotations"
-gdown https://drive.google.com/uc?id=1JLkStcXlhVzvB7Fns-c2Wy_94j8NH75R     # train
-gdown https://drive.google.com/uc?id=1fj9Sg4v4TwSvD2nxs90uzNqZgVythxLS     # val
+gdown https://drive.google.com/uc?id=1qbPP3QdSSXHbUI5YoozQlTURk_kNXDpN     # train
+gdown https://drive.google.com/uc?id=1R4mzlc0u9CmDA-W92DlXtKhlacypiW8I     # val
 
 cd ..
 
@@ -38,7 +38,7 @@ echo "Downloading CornerNet-Hourglass model parameters"
 mkdir hourglass
 cd hourglass
 
-gdown https://drive.google.com/uc?id=1HBFgPExTTlNTsAjyPoj9tMU7oqKaiuBz
+gdown https://drive.google.com/uc?id=1dWqYHrGsYMWVY0w_NZFXCVzfORb-i4sU
 
 cd ..
 
@@ -48,7 +48,7 @@ echo "Downloading MobileNetV3 model parameters"
 mkdir mobilenetv3
 cd mobilenetv3
 
-gdown https://drive.google.com/uc?id=14mGBjXldBPoJfOndSxY_26Q4vC5HjVvk
+gdown https://drive.google.com/uc?id=1i7fxnyWRiuRqQ6MeR0LzBNdi0MzgVCF-
 
 cd ../..
 

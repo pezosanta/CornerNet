@@ -1,16 +1,16 @@
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import matplotlib.pyplot as plt
 import numpy as np
 import time
-import glob
 import warnings
-from Dataset import Dataset
-from CornerNet import kp as cornernet
+from dataset import Dataset
+from cornernet import kp as cornernet
 from losses import AELoss
 from test import generate_detections, save_detections, evaluate_detections, make_grid_image
+from train_utils import tensorboard_add_hparams, tensorboard_epoch_ending_logs, tensorboard_saving_logs, saving_model_params, tensorboard_add_scalars, tensorboard_starting_logs, loading_original_model_params
 
 warnings.filterwarnings(action = 'once')
 
@@ -58,17 +58,21 @@ def train(batch_size = 14, epochs = 100):
     last_breakdown_75               = []
 
     cat_list                        = []
+
+    optimizer_name                  = "ADAM (AMSGRAD)"
+
+    server_model_params_path        = '../../../logs/cornernet/ModelParams/hourglass/cornernet_hourglass_pretrained_best.pth'
     
     # Tensorboard SummaryWriters for training logs
-    writer_text                     = SummaryWriter('../Tensorboard/cornernet_hourglass_training_text/')
-    writer_avg_train_loss           = SummaryWriter('../Tensorboard/cornernet_hourglass_training_avg_train_loss_per_epoch/')
-    writer_avg_valid_loss           = SummaryWriter('../Tensorboard/cornernet_hourglass_training_avg_valid_loss_per_epoch/')
-    writer_map_50                   = SummaryWriter('../Tensorboard/cornernet_hourglass_training_mean_ap_50/')
-    writer_map_75                   = SummaryWriter('../Tensorboard/cornernet_hourglass_training_mean_ap_75/')
-    writer_cat_ap_50                = SummaryWriter('../Tensorboard/cornernet_hourglass_training_categories_ap_50/')
-    writer_cat_ap_75                = SummaryWriter('../Tensorboard/cornernet_hourglass_training_categories_ap_75/')
-    writer_image                    = SummaryWriter('../Tensorboard/cornernet_hourglass_training_image/')
-    writer_hparams                  = SummaryWriter('../Tensorboard/cornernet_hourglass_training_hparams/')
+    writer_text                     = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_text/')
+    writer_avg_train_loss           = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_avg_train_loss_per_epoch/')
+    writer_avg_valid_loss           = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_avg_valid_loss_per_epoch/')
+    writer_map_50                   = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_mean_ap_50/')
+    writer_map_75                   = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_mean_ap_75/')
+    writer_cat_ap_50                = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_categories_ap_50/')
+    writer_cat_ap_75                = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_categories_ap_75/')
+    writer_image                    = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_image/')
+    writer_hparams                  = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_hparams/')
     '''
     # Loading the best checkpoint
     checkpoint_path                 = '../ModelParams/Hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(11)
@@ -104,29 +108,10 @@ def train(batch_size = 14, epochs = 100):
     mAP_loader                      = DataLoader(mAP_dataset, batch_size = 1, shuffle = False)
    
     model                           = cornernet(n = n, nstack = nstack, dims = dims, modules = modules, out_dim = out_dim).cuda()
-
     
     # Loading the original pretrained (on MSCOCO) weights in the first epoch
-    checkpoint_path                 = '../ModelParams/Hourglass/CornerNet_500000.pkl'
-    pretrained_dict                 = torch.load(checkpoint_path)
-    prefix                          = 'module.'
-    n_clip                          = len(prefix)
-    adapted_dict                    = {k[n_clip:]: v for k, v in pretrained_dict.items()
-                                        if (k.startswith(prefix + 'pre') or k.startswith(prefix + 'kps') or k.startswith(prefix + 'inter') or k.startswith(prefix + 'cnv'))}
-    
-    model.load_state_dict(adapted_dict, strict = False)
-
-    model_dict                      = model.state_dict()
-    count                           = 0
-    for name, param in adapted_dict.items():
-        if name not in model_dict:
-            continue
-        if(torch.equal(model_dict[name], param)):
-            #print(name)
-            count += 1
-    
-    print('NUMBER OF LAYERS THAT ARE LOADED FROM THE ORIGINAL PRETRAINED MODEL: {}'.format(count))
-    
+    checkpoint_path                 = '../../../logs/cornernet/ModelParams/hourglass/CornerNet_500000.pkl'
+    model                           = loading_original_model_params(checkpoint_path, model)
 
     criterion                       = AELoss(pull_weight = 1e-1, push_weight = 1e-1)
     optimizer                       = optim.Adam(model.parameters(), lr = base_lr_rate, weight_decay = weight_decay, amsgrad = True)
@@ -135,26 +120,13 @@ def train(batch_size = 14, epochs = 100):
     #model.load_state_dict(checkpoint['model_state_dict'])
     #optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-    writer_text.add_text(tag = 'Hourglass/StartingLogs',                                                                                                  \
-                    text_string = (   'LOADED MODEL PARAMETERS: {}  \n'.format(checkpoint_path)                                                           \
-                                    + 'BATCH SIZE: {}  \n'.format(batch_size)                                                                             \
-                                    + 'NUMBER OF EPOCHS: {}  \n'.format(epochs)                                                                           \
-                                    + 'STARTING EPOCH: {}  \n'.format(starting_epoch)                                                                     \
-                                    + 'TRAINING ITERATIONS / EPOCH: {}  \n'.format(len(train_loader))                                                     \
-                                    + 'VALIDATION ITERATIONS / EPOCH: {}  \n'.format(len(val_loader))                                                     \
-                                    + 'LEARNING RATE: {}  \n'.format(base_lr_rate)                                                                        \
-                                    + 'WEIGHT DECAY (L2 REGULARIZATION): {}  \n'.format(weight_decay)                                                     \
-                                    + 'MEAN AP CALCULATION EPOCH INTERVAL: {}  \n'.format(mean_ap_epoch_interval)                                         \
-                                    + 'MEAN AP IOU THRESHOLDS: [{}%, {}%]  \n'.format(int(mean_ap_thresholds[0] * 100), int(mean_ap_thresholds[1] * 100)) \
-                                    + '[BEST/LAST] AVERAGE TRAINING LOSS: [{:5f} / {:5f}]  \n'.format(
-                                            best_epoch_average_train_loss, last_epoch_average_train_loss)                                                 \
-                                    + '[BEST/LAST] AVERAGE VALIDATION LOSS: [{:5f} / {:5f}]  \n'.format(
-                                            best_epoch_average_val_loss, last_epoch_average_val_loss)                                                     \
-                                    + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:2f} / {:2f}]  \n'.format(
-                                            int(mean_ap_thresholds[0] * 100), best_mAP_50, last_mAP_50)                                                   \
-                                    + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:2f} / {:2f}]  \n'.format(
-                                            int(mean_ap_thresholds[1] * 100), best_mAP_75, last_mAP_75)),                                                 \
-                    global_step = None, walltime = None) 
+    if torch.cuda.device_count() > 1:
+        print("LET'S USE", torch.cuda.device_count(), "GPUS!")
+        model = nn.DataParallel(model)
+    
+    tensorboard_starting_logs(writer_text, checkpoint_path, batch_size, epochs, starting_epoch, train_loader, val_loader, base_lr_rate, weight_decay, mean_ap_epoch_interval, mean_ap_thresholds,
+                                best_epoch_average_train_loss, last_epoch_average_train_loss, best_epoch_average_val_loss, last_epoch_average_val_loss, best_mAP_50, last_mAP_50,
+                                best_mAP_75, last_mAP_75)
 
     # Start the training
     for current_epoch in range(starting_epoch, epochs):
@@ -162,7 +134,7 @@ def train(batch_size = 14, epochs = 100):
                
         epoch_since                 = time.time()
 
-        writer_epoch                = SummaryWriter('../Tensorboard/cornernet_hourglass_training_avg_loss_per_iteration_epoch_{}/'.format(current_epoch + 1))
+        writer_epoch                = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass/cornernet_hourglass_training_avg_loss_per_iteration_epoch_{}/'.format(current_epoch + 1))
 
         detections_json             = []
         pred_detections_images      = []
@@ -195,13 +167,13 @@ def train(batch_size = 14, epochs = 100):
                 for train_data in train_loader:
                     
                     current_train_iter += 1
-
+                    
                     images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images = train_data
 
                     xs = [images, tl_tags, br_tags]
                     ys = [tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs]                  
             
-                    outs = model(*xs, mode = 'Train')          
+                    outs = model(*xs, mode = 'Train')     
             
                     #scheduler = poly_lr_scheduler(optimizer = optimizer, init_lr = base_lr_rate, iter = current_iter, lr_decay_iter = 1, 
                     #                          max_iter = max_iter, power = power)                                                          # max_iter = len(train_loader)
@@ -261,19 +233,24 @@ def train(batch_size = 14, epochs = 100):
             mAP_epoch_since = time.time()
 
             annot_image_saving_iterations = np.random.randint(low = 1, high = (len(mAP_loader) - 1), size = 4)
-            annot_image_saving_iterations = [1, 2, 3, 4]
-
-            model.eval()
+            #annot_image_saving_iterations = [1, 2, 3, 4]
+            
+            if torch.cuda.device_count() > 1:
+                module = model.module
+            else:
+                module = model
+            
+            module.eval()
 
             with torch.no_grad():
                 for mAP_data in mAP_loader:
                     mAP_batch_since = time.time()
                     
                     current_mAP_iter += 1
-
+                    
                     images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs, names, orig_images = mAP_data
-
-                    detections = model(images, mode = 'mAP', ae_threshold = ae_threshold, top_k = top_k, kernel = nms_kernel)
+                    
+                    detections = module(images, mode = 'mAP', ae_threshold = ae_threshold, top_k = top_k, kernel = nms_kernel)
 
                     generate_detections(detections = detections, names = names, orig_images = orig_images,              \
                         detections_json = detections_json, nms_threshold = nms_threshold, min_score = min_score,        \
@@ -289,30 +266,9 @@ def train(batch_size = 14, epochs = 100):
 
                 writer_map_50.add_scalar(tag = 'Hourglass/MEAN_AP', scalar_value = current_mAP_50, global_step = (current_epoch + 1))
                 writer_map_75.add_scalar(tag = 'Hourglass/MEAN_AP', scalar_value = current_mAP_75, global_step = (current_epoch + 1))
-                writer_cat_ap_50.add_scalars(main_tag = 'Hourglass/CATEGORY_AP_50/', 
-                    tag_scalar_dict =  {cat_list[0].upper(): current_breakdown_50[0],
-                                        cat_list[1].upper(): current_breakdown_50[1],
-                                        cat_list[2].upper(): current_breakdown_50[2],
-                                        cat_list[3].upper(): current_breakdown_50[3],
-                                        cat_list[4].upper(): current_breakdown_50[4],
-                                        cat_list[5].upper(): current_breakdown_50[5],
-                                        cat_list[6].upper(): current_breakdown_50[6],
-                                        cat_list[7].upper(): current_breakdown_50[7],
-                                        cat_list[8].upper(): current_breakdown_50[8],
-                                        cat_list[9].upper(): current_breakdown_50[9]},
-                    global_step = (current_epoch + 1))
-                writer_cat_ap_75.add_scalars(main_tag = 'Hourglass/CATEGORY_AP_75/', 
-                    tag_scalar_dict =  {cat_list[0].upper(): current_breakdown_75[0],
-                                        cat_list[1].upper(): current_breakdown_75[1],
-                                        cat_list[2].upper(): current_breakdown_75[2],
-                                        cat_list[3].upper(): current_breakdown_75[3],
-                                        cat_list[4].upper(): current_breakdown_75[4],
-                                        cat_list[5].upper(): current_breakdown_75[5],
-                                        cat_list[6].upper(): current_breakdown_75[6],
-                                        cat_list[7].upper(): current_breakdown_75[7],
-                                        cat_list[8].upper(): current_breakdown_75[8],
-                                        cat_list[9].upper(): current_breakdown_75[9]},
-                    global_step = (current_epoch + 1))
+
+                tensorboard_add_scalars(writer_cat_ap_50, 'Hourglass/CATEGORY_AP_50/', cat_list, current_breakdown_50, current_epoch)
+                tensorboard_add_scalars(writer_cat_ap_75, 'Hourglass/CATEGORY_AP_75/', cat_list, current_breakdown_75, current_epoch)
                 
                 last_mAP_50 = current_mAP_50
                 last_mAP_75 = current_mAP_75
@@ -339,95 +295,36 @@ def train(batch_size = 14, epochs = 100):
                 best_mAP_75             = last_mAP_75
                 best_breakdown_75       = last_breakdown_75   
 
-            PATH = '../ModelParams/Hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(current_epoch + 1)                        
-            torch.save({
-                    'epoch': current_epoch,
-                    'iter': current_train_iter,
-                    'lr': base_lr_rate,
-                    'weight_decay': weight_decay,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'best_train_loss': best_epoch_average_train_loss,
-                    'best_val_loss': best_epoch_average_val_loss,
-                    'best_map_50': best_mAP_50,
-                    'best_map_75': best_mAP_75,
-                    'best_breakdown_50': best_breakdown_50,
-                    'best_breakdown_75': best_breakdown_75,
-                    'last_train_loss': last_epoch_average_train_loss,
-                    'last_val_loss': last_epoch_average_val_loss,
-                    'last_map_50': last_mAP_50,
-                    'last_map_75': last_mAP_75,
-                    'last_breakdown_50': last_breakdown_50,
-                    'last_breakdown_75': last_breakdown_75
-                    }, PATH)
+            PATH = '../ModelParams/hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(current_epoch + 1)
+            saving_model_params(PATH, current_epoch, current_train_iter, base_lr_rate, weight_decay, model, optimizer, best_epoch_average_train_loss, best_epoch_average_val_loss,
+                            best_mAP_50, best_mAP_75, best_breakdown_50, best_breakdown_75, last_epoch_average_train_loss, last_epoch_average_val_loss, last_mAP_50, last_mAP_75,
+                            last_breakdown_50, last_breakdown_75)
+
+            PATH = server_model_params_path
+            saving_model_params(PATH, current_epoch, current_train_iter, base_lr_rate, weight_decay, model, optimizer, best_epoch_average_train_loss, best_epoch_average_val_loss,
+                            best_mAP_50, best_mAP_75, best_breakdown_50, best_breakdown_75, last_epoch_average_train_loss, last_epoch_average_val_loss, last_mAP_50, last_mAP_75,
+                            last_breakdown_50, last_breakdown_75)                        
             
-            writer_text.add_text(tag = 'SavingLogs',                                                                           \
-                        text_string = (   '!!! IMPROVEMENT !!! MODEL PARAMETERS HAVE BEEN SAVED !!!  \n'                       \
-                                        + '[BEST/LAST] AVERAGE TRAINING LOSS: [{:5f} / {:5f}]  \n'.format(
-                                                best_epoch_average_train_loss, last_epoch_average_train_loss)                  \
-                                        + '[BEST/LAST] AVERAGE VALIDATION LOSS: [{:5f} / {:5f}]  \n'.format(
-                                                best_epoch_average_val_loss, last_epoch_average_val_loss)                      \
-                                        + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:2f} / {:2f}]  \n'.format(
-                                                int(mean_ap_thresholds[0] * 100), best_mAP_50, last_mAP_50)                    \
-                                        + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:2f} / {:2f}]  \n'.format(
-                                                int(mean_ap_thresholds[1] * 100), best_mAP_75, last_mAP_75)),                  \
-                        global_step = (current_epoch + 1), walltime = None)
+            title = '!!! IMPROVEMENT !!! MODEL PARAMETERS HAVE BEEN SAVED !!!'            
+            tensorboard_saving_logs(writer_text, title, best_epoch_average_train_loss, last_epoch_average_train_loss, best_epoch_average_val_loss, last_epoch_average_val_loss,
+                                        mean_ap_thresholds, best_mAP_50, last_mAP_50, best_mAP_75, last_mAP_75, current_epoch)
 
         else:
-             writer_text.add_text(tag = 'SavingLogs',                                                                          \
-                        text_string = (   '!!! NO IMPROVEMENT !!!  \n'                                                         \
-                                        + '[BEST/LAST] AVERAGE TRAINING LOSS: [{:5f} / {:5f}]  \n'.format(
-                                                best_epoch_average_train_loss, last_epoch_average_train_loss)                  \
-                                        + '[BEST/LAST] AVERAGE VALIDATION LOSS: [{:5f} / {:5f}]  \n'.format(
-                                                best_epoch_average_val_loss, last_epoch_average_val_loss)                      \
-                                        + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:2f} / {:2f}]  \n'.format(
-                                                int(mean_ap_thresholds[0] * 100), best_mAP_50, last_mAP_50)                    \
-                                        + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:2f} / {:2f}]  \n'.format(
-                                                int(mean_ap_thresholds[1] * 100), best_mAP_75, last_mAP_75)),                  \
-                        global_step = (current_epoch + 1), walltime = None)
+            title = '!!! NO IMPROVEMENT !!!'            
+            tensorboard_saving_logs(writer_text, title, best_epoch_average_train_loss, last_epoch_average_train_loss, best_epoch_average_val_loss, last_epoch_average_val_loss,
+                                        mean_ap_thresholds, best_mAP_50, last_mAP_50, best_mAP_75, last_mAP_75, current_epoch)
         
-        writer_hparams.add_hparams(hparam_dict = {'EPOCH': str(current_epoch + 1),
-                                                  'BATCH SIZE': str(batch_size),
-                                                  'OPTIMIZER': 'ADAM (AMSGRAD)',
-                                                  'LEARNING RATE': str(base_lr_rate),
-                                                  'WEIGHT DECAY': str(weight_decay),
-                                                  'TRAIN LOSS': '{:5f}'.format(last_epoch_average_train_loss),
-                                                  'VAL LOSS': '{:5f}'.format(last_epoch_average_val_loss),
-                                                  'MEAN AP [AP50 / AP75]': '{:2f} / {:2f}'.format(last_mAP_50, last_mAP_75),
-                                                  cat_list[0].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[0], last_breakdown_75[0]),
-                                                  cat_list[1].upper() + ' [AP50 / PA75]': '{:2f} / {:2f}'.format(last_breakdown_50[1], last_breakdown_75[1]),
-                                                  cat_list[2].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[2], last_breakdown_75[2]),
-                                                  cat_list[3].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[3], last_breakdown_75[3]),
-                                                  cat_list[4].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[4], last_breakdown_75[4]),
-                                                  cat_list[5].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[5], last_breakdown_75[5]),
-                                                  cat_list[6].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[6], last_breakdown_75[6]),
-                                                  cat_list[7].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[7], last_breakdown_75[7]),
-                                                  cat_list[8].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[8], last_breakdown_75[8]),
-                                                  cat_list[9].upper() + ' [AP50 / AP75]': '{:2f} / {:2f}'.format(last_breakdown_50[9], last_breakdown_75[9]),
-                                                  'SAVED': str(is_saved)},
-                                    metric_dict = {'Hourglass/VV_LEARNING_RATE': base_lr_rate})
-        
+        '''
+        # SummaryWriter does not have an add_hparams method in torch==1.1.0 (added in 1.3.0)
+        tensorboard_add_hparams(writer_hparams, current_epoch, batch_size, optimizer_name, base_lr_rate, weight_decay, last_epoch_average_train_loss, last_epoch_average_val_loss,
+                                last_mAP_50, last_mAP_75, cat_list, last_breakdown_50, last_breakdown_75, is_saved)
+        '''
+
         epoch_time_elapsed = time.time() - epoch_since
 
         # Epoch ending logs
-        writer_text.add_text(tag = 'Hourglass/RunningLogs',                                                                    \
-                        text_string = (   '[BEST/LAST] AVERAGE TRAINING LOSS: [{:5f} / {:5f}]  \n'.format(
-                                                best_epoch_average_train_loss, last_epoch_average_train_loss)                  \
-                                        + '[BEST/LAST] AVERAGE VALIDATION LOSS: [{:5f} / {:5f}]  \n'.format(
-                                                best_epoch_average_val_loss, last_epoch_average_val_loss)                      \
-                                        + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:5f} / {:5f}]  \n'.format(
-                                                int(mean_ap_thresholds[0] * 100), best_mAP_50, last_mAP_50)                    \
-                                        + '[BEST/LAST] MEAN AVERAGE PRECISION (IOU = {}%): [{:5f} / {:5f}]  \n'.format(
-                                                int(mean_ap_thresholds[1] * 100), best_mAP_75, last_mAP_75)                    \
-                                        + 'EPOCH TIME: {}:{}  \n'.format(
-                                                int(epoch_time_elapsed // 60 // 60), int(epoch_time_elapsed // 60 % 60))       \
-                                        + 'TRAINING TIME: {}:{}  \n'.format(
-                                                int(train_time_elapsed // 60 // 60), int(train_time_elapsed // 60 % 60))       \
-                                        + 'VALIDATION TIME: {}:{}  \n'.format(
-                                                int(val_time_elapsed // 60 // 60), int(val_time_elapsed // 60 % 60))           \
-                                        + 'MEAN AVERAGE PRECISION TIME: {}:{}  \n'.format(
-                                                int(mAP_time_elapsed // 60 // 60), int(mAP_time_elapsed // 60 % 60))),         \
-                        global_step = (current_epoch + 1), walltime = None)
+        tensorboard_epoch_ending_logs(writer_text, best_epoch_average_train_loss, last_epoch_average_train_loss, best_epoch_average_val_loss, last_epoch_average_val_loss, mean_ap_thresholds,
+                                        best_mAP_50, last_mAP_50, best_mAP_75, last_mAP_75, epoch_time_elapsed, train_time_elapsed, val_time_elapsed, mAP_time_elapsed, current_epoch)
 
 if __name__ == "__main__":
-    train()
+    train(batch_size = 32, epochs = 150)

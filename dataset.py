@@ -1,23 +1,13 @@
-import glob
 from PIL import Image
 from skimage import io
-import matplotlib.pyplot as plt
 import json
-import os
-from os.path import exists, splitext, isdir, isfile, join, split, dirname
-import sys
-#from pprint import pprint
 import numpy as np
 import torch
 import torchvision.transforms as Transforms
-from torchvision.utils import make_grid
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import Dataset
 from test import generate_annotated_image
 import math
-from CornerNet import kp
 import cv2
-from losses import AELoss
 
 categories = [  'bus',
                 'traffic light',
@@ -42,11 +32,11 @@ categories_dict = { 'bus': 0,
                     'rider': 9 }
 
 # Docker
-train_annotation_path = "../BDD100K/bdd100k_labels_images_train.json"           # bdd100k_labels_images_train.json[0:60000]
-val_annotation_path = "../BDD100K/bdd100k_labels_images_val.json"               # bdd100k_labels_images_train.json[60000:]
-test_annotation_path = "../BDD100K/bdd100k_labels_images_test.json"             # bdd100k_labels_images_val.json
-train_image_root = "../BDD100K/train/"
-val_image_root = "../BDD100K/val/"
+train_annotation_path   = "../../../logs/cornernet/BDD100K/bdd100k_labels_images_train.json"           # bdd100k_labels_images_train.json[0:60000]
+val_annotation_path     = "../../../logs/cornernet/BDD100K/bdd100k_labels_images_val.json"             # bdd100k_labels_images_train.json[60000:]
+test_annotation_path    = "../../../logs/cornernet/BDD100K/bdd100k_labels_images_test.json"            # bdd100k_labels_images_val.json
+train_image_root        = "../../../logs/cornernet/BDD100K/train/"
+val_image_root          = "../../../logs/cornernet/BDD100K/val/"
 
 def get_annotations(mode):   
     if mode == 'Train':
@@ -244,7 +234,8 @@ class Dataset(Dataset):
         if self.mode == 'Train':
             image, detection = self.random_transforms(image, detection)
 
-        orig_image        = generate_annotated_image(image = orig_image, detections = orig_detection, mode = 'GT') 
+        orig_image        = generate_annotated_image(image = orig_image, detections = orig_detection, mode = 'GT')
+        orig_image        = torch.from_numpy(orig_image).float()
         #transformed_image = generate_annotated_image(image = image, detections = detection, mode = 'GT')        
 
         images, tl_tags, br_tags, tl_heatmaps, br_heatmaps, tag_masks, tl_regrs, br_regrs = self.create_groundtruth(image = image, detection = detection)
