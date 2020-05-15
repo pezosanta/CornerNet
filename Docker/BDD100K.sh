@@ -7,8 +7,8 @@ pip3 install gdown
 # Downloading Train, Val, Test datasets
 echo "Downloading BDD100K dataset"
 
-mkdir BDD100K-test
-cd BDD100K-test
+mkdir BDD100K
+cd BDD100K
 
 gdown https://drive.google.com/uc?id=1MymWKQUFCENauQP8A6QRk1EglinAKaud     # train
 gdown https://drive.google.com/uc?id=1zgutvylvwv4CFz7rzlPFsL5mrTFHuqFG     # val
@@ -22,6 +22,10 @@ unzip -qq test.zip
 rm -r train.zip
 rm -r val.zip
 rm -r test.zip
+
+echo "Downloading Train, Val annotations"
+gdown https://drive.google.com/uc?id=1JLkStcXlhVzvB7Fns-c2Wy_94j8NH75R     # train
+gdown https://drive.google.com/uc?id=1fj9Sg4v4TwSvD2nxs90uzNqZgVythxLS     # val
 
 cd ..
 
