@@ -1,72 +1,53 @@
 #!/bin/bash
 
-echo "Creating BDD100K dataset"
+# Installing Google Drive downloading API with pip3
+echo "Installing gdown"
+pip3 install gdown
 
-mkdir BDD100K
+# Downloading Train, Val, Test datasets
+echo "Downloading BDD100K dataset"
+
+mkdir BDD100K-test
+cd BDD100K-test
+
+gdown https://drive.google.com/uc?id=1MymWKQUFCENauQP8A6QRk1EglinAKaud     # train
+gdown https://drive.google.com/uc?id=1zgutvylvwv4CFz7rzlPFsL5mrTFHuqFG     # val
+gdown https://drive.google.com/uc?id=1JS2jhgdEH8OwCOCQl-BqrYFuI0L2noaO     # test
+
+echo "Unzipping Train, Val, Test datasets"
+unzip -qq train.zip
+unzip -qq val.zip
+unzip -qq test.zip
+
+rm -r train.zip
+rm -r val.zip
+rm -r test.zip
+
+cd ..
+
+# Downloading CornerNet-Hourglass model parameters
 mkdir ModelParams
-
-cd BDD100K
-
-# Tanító adathalmaz letöltése
-export trainimagesid=1MymWKQUFCENauQP8A6QRk1EglinAKaud
-export trainimagesfilename=train.zip
-wget --save-cookies trainimagescookies.txt 'https://docs.google.com/uc?export=download&id='$trainimagesid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > trainimagesconfirm.txt
-wget --load-cookies trainimagescookies.txt -O $trainimagesfilename \
-     'https://docs.google.com/uc?export=download&id='$trainimagesid'&confirm='$(<trainimagesconfirm.txt)
-
-
-# Validációs adathalmaz letöltése
-export valimagesid=1zgutvylvwv4CFz7rzlPFsL5mrTFHuqFG
-export valimagesfilename=val.zip
-wget --save-cookies valimagescookies.txt 'https://docs.google.com/uc?export=download&id='$valimagesid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > valimagesconfirm.txt
-wget --load-cookies valimagescookies.txt -O $valimagesfilename \
-     'https://docs.google.com/uc?export=download&id='$valimagesid'&confirm='$(<valimagesconfirm.txt)
-
-
-# Tanító annotáció letöltése
-export trainannotationid=1JLkStcXlhVzvB7Fns-c2Wy_94j8NH75R
-export trainannotationfilename=bdd100k_labels_images_train.json
-wget --save-cookies trainannotationcookies.txt 'https://docs.google.com/uc?export=download&id='$trainannotationid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > trainannotationconfirm.txt
-wget --load-cookies trainannotationcookies.txt -O $trainannotationfilename \
-     'https://docs.google.com/uc?export=download&id='$trainannotationid'&confirm='$(<trainannotationconfirm.txt)
-
-
-# Validációs annotáció letöltése
-export valannotationid=1fj9Sg4v4TwSvD2nxs90uzNqZgVythxLS
-export valannotationfilename=bdd100k_labels_images_val.json
-wget --save-cookies valannotationcookies.txt 'https://docs.google.com/uc?export=download&id='$valannotationid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > valannotationconfirm.txt
-wget --load-cookies valannotationcookies.txt -O $valannotationfilename \
-     'https://docs.google.com/uc?export=download&id='$valannotationid'&confirm='$(<valannotationconfirm.txt)
-
-unzip train.zip
-unzip val.zip
-
-cd ..
 cd ModelParams
-mkdir Hourglass
-cd Hourglass
 
-# Best ModelParams letöltése
-export Hourglass_modelparamsid=13tYTwt-1PL8e-tCBN8QBC2vCNmEgbkmu
-export Hourglass_modelparamsfilename=train_valid_pretrained_cornernet-epoch3-iter5067.pth
-wget --save-cookies modelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$Hourglass_modelparamsid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > modelparamsconfirm.txt
-wget --load-cookies modelparamscookies.txt -O $Hourglass_modelparamsfilename \
-     'https://docs.google.com/uc?export=download&id='$Hourglass_modelparamsid'&confirm='$(<modelparamsconfirm.txt)
+echo "Downloading CornerNet-Hourglass model parameters"
 
-export Hourglass_origmodelparamsid=1HBFgPExTTlNTsAjyPoj9tMU7oqKaiuBz
-export Hourglass_origmodelparamsfilename=CornerNet_500000.pkl
-wget --save-cookies origmodelparamscookies.txt 'https://docs.google.com/uc?export=download&id='$Hourglass_origmodelparamsid -O- \
-     | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > origmodelparamsconfirm.txt
-wget --load-cookies origmodelparamscookies.txt -O $Hourglass_origmodelparamsfilename \
-     'https://docs.google.com/uc?export=download&id='$Hourglass_origmodelparamsid'&confirm='$(<origmodelparamsconfirm.txt)
+mkdir hourglass
+cd hourglass
+
+gdown https://drive.google.com/uc?id=1HBFgPExTTlNTsAjyPoj9tMU7oqKaiuBz
 
 cd ..
-cd ..
+
+# Downloading MobileNetV3 model parameters
+echo "Downloading MobileNetV3 model parameters"
+
+mkdir mobilenetv3
+cd mobilenetv3
+
+gdown https://drive.google.com/uc?id=14mGBjXldBPoJfOndSxY_26Q4vC5HjVvk
+
+cd ../..
+
 
 
 
