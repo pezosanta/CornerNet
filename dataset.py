@@ -13,9 +13,9 @@ categories = [  'bus',
                 'traffic light',
                 'traffic sign',
                 'person',
-                'bicycle',
+                'bike',
                 'truck',
-                'motorcycle',
+                'motor',
                 'car',
                 'train',
                 'rider' ]
@@ -24,9 +24,9 @@ categories_dict = { 'bus': 0,
                     'traffic light': 1,
                     'traffic sign': 2,
                     'person': 3,
-                    'bicycle': 4,
+                    'bike': 4,
                     'truck': 5,
-                    'motorcycle': 6,
+                    'motor': 6,
                     'car': 7,
                     'train': 8,
                     'rider': 9 }
@@ -212,14 +212,14 @@ class Dataset(Dataset):
         self.image_names, self.detections = get_annotations(mode = self.mode) 
 
         self.gaussian_bump = True
-        self.gaussian_iou = 0.7
+        self.gaussian_iou = 0.3
         self.gaussian_rad = -1    
         self.orig_size = [720, 1280]
         self.input_size = [384, 640]     # Original_input_size / 2 (with modified height, that is essential for the network)
         self.output_size = [96, 160]     # Original_input_size / 8 
         self.num_categories = 10
         self.max_tag_len = 160
-        self.ColorJitter = Transforms.ColorJitter(brightness = 0.3, contrast = 0.4, saturation = 0.4, hue = 0.2)
+        self.ColorJitter = Transforms.ColorJitter(brightness = 0.25, contrast = 0.25, saturation = 0.25, hue = 0.1) # 0.3, 0.4, 0.4, 0.2
 
     def __getitem__(self, index):
         name = self.image_names[index]
@@ -250,7 +250,7 @@ class Dataset(Dataset):
             image, detection = random_zoom(image, detection, size = self.orig_size)
             #print('RANDOM ZOOM!')
         
-        # Random horizontal flip (random mirror)
+        # Random vertical flip (random mirror)
         if (np.random.uniform() > 0.5):
             image[:] = image[:, ::-1, :]
             width = detection[:, 3] - detection[:, 1]
