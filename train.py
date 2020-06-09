@@ -17,6 +17,12 @@ warnings.filterwarnings(action = 'once')
 def train(batch_size = 14, epochs = 100):
     since = time.time()
 
+    hourglass_run_2_lr_factor       = 1.75
+    hourglass_run_2_path            = "hourglass_run_2"
+
+    hourglass_run_3_lr_factor       = 2
+    hourglass_run_3_path            = "hourglass_run_3"
+
     # Hyperparams of the model
     n                               = 5
     nstack                          = 2
@@ -25,7 +31,7 @@ def train(batch_size = 14, epochs = 100):
     out_dim                         = 10
 
     # Hyperparams of the optimizer
-    base_lr_rate                    = 0.00025 * 1.75    #  0.00025
+    base_lr_rate                    = 0.00025 * hourglass_run_3_lr_factor    #  0.00025
     weight_decay                    = 0.000016
 
     # Hyperparams for creating bounding boxes
@@ -61,18 +67,18 @@ def train(batch_size = 14, epochs = 100):
 
     optimizer_name                  = "ADAM (AMSGRAD)"
 
-    server_model_params_path        = '../../../logs/cornernet/ModelParams/hourglass_run_2/cornernet_hourglass_pretrained_best.pth'
+    server_model_params_path        = '../../../logs/cornernet/ModelParams/' + hourglass_run_3_path + '/cornernet_hourglass_pretrained_best.pth'
     
     # Tensorboard SummaryWriters for training logs
-    writer_text                     = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_text/')
-    writer_avg_train_loss           = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_avg_train_loss_per_epoch/')
-    writer_avg_valid_loss           = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_avg_valid_loss_per_epoch/')
-    writer_map_50                   = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_mean_ap_50/')
-    writer_map_75                   = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_mean_ap_75/')
-    writer_cat_ap_50                = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_categories_ap_50/')
-    writer_cat_ap_75                = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_categories_ap_75/')
-    writer_image                    = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_image/')
-    writer_hparams                  = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_hparams/')
+    writer_text                     = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_text/')
+    writer_avg_train_loss           = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_avg_train_loss_per_epoch/')
+    writer_avg_valid_loss           = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_avg_valid_loss_per_epoch/')
+    writer_map_50                   = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_mean_ap_50/')
+    writer_map_75                   = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_mean_ap_75/')
+    writer_cat_ap_50                = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_categories_ap_50/')
+    writer_cat_ap_75                = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_categories_ap_75/')
+    writer_image                    = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_image/')
+    writer_hparams                  = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_hparams/')
     '''
     # Loading the best checkpoint
     checkpoint_path                 = '../ModelParams/hourglass/cornernet_hourglass_pretrained-epoch{}.pth'.format(125)
@@ -134,7 +140,7 @@ def train(batch_size = 14, epochs = 100):
                
         epoch_since                 = time.time()
 
-        writer_epoch                = SummaryWriter('../../../logs/cornernet/Tensorboard/hourglass_run_2/cornernet_hourglass_training_avg_loss_per_iteration_epoch_{}/'.format(current_epoch + 1))
+        writer_epoch                = SummaryWriter('../../../logs/cornernet/Tensorboard/' + hourglass_run_3_path + '/cornernet_hourglass_training_avg_loss_per_iteration_epoch_{}/'.format(current_epoch + 1))
 
         # Reinitializing loaders in every epoch
         train_loader                = DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
@@ -300,7 +306,7 @@ def train(batch_size = 14, epochs = 100):
                 best_mAP_75             = last_mAP_75
                 best_breakdown_75       = last_breakdown_75   
 
-            PATH = '../ModelParams/hourglass_run_2/cornernet_hourglass_pretrained-epoch{}.pth'.format(current_epoch + 1)
+            PATH = '../ModelParams/' + hourglass_run_3_path + '/cornernet_hourglass_pretrained-epoch{}.pth'.format(current_epoch + 1)
             saving_model_params(PATH, current_epoch, current_train_iter, base_lr_rate, weight_decay, model, optimizer, best_epoch_average_train_loss, best_epoch_average_val_loss,
                             best_mAP_50, best_mAP_75, best_breakdown_50, best_breakdown_75, last_epoch_average_train_loss, last_epoch_average_val_loss, last_mAP_50, last_mAP_75,
                             last_breakdown_50, last_breakdown_75)
